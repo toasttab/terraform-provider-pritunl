@@ -2,87 +2,158 @@ package provider
 
 import (
 	"context"
+	"fmt"
+
 	"github.com/disc/terraform-provider-pritunl/internal/pritunl"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-func resourceOrganization() *schema.Resource {
-	return &schema.Resource{
-		Description: "The organization resource allows managing information about a particular Pritunl organization.",
-		Schema: map[string]*schema.Schema{
-			"name": {
-				Type:        schema.TypeString,
-				Required:    true,
-				Description: "The name of the resource, also acts as it's unique ID",
+var _ resource.Resource = &OrganizationResource{}
+var _ resource.ResourceWithImportState = &OrganizationResource{}
+
+func NewOrganizationResource() resource.Resource {
+	return &OrganizationResource{}
+}
+
+type OrganizationResource struct {
+	client pritunl.Client
+}
+
+type OrganizationResourceModel struct {
+	ID   types.String `tfsdk:"id"`
+	Name types.String `tfsdk:"name"`
+}
+
+func (r *OrganizationResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_organization"
+}
+
+func (r *OrganizationResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		MarkdownDescription: "The organization resource allows managing information about a particular Pritunl organization.",
+
+		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Organization identifier",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"name": schema.StringAttribute{
+				MarkdownDescription: "The name of the organization.",
+				Required:            true,
 			},
 		},
-		CreateContext: resourceCreateOrganization,
-		ReadContext:   resourceReadOrganization,
-		UpdateContext: resourceUpdateOrganization,
-		DeleteContext: resourceDeleteOrganization,
-		Importer: &schema.ResourceImporter{
-			StateContext: schema.ImportStatePassthroughContext,
-		},
 	}
 }
 
-// Uses for importing
-func resourceReadOrganization(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	apiClient := meta.(pritunl.Client)
-
-	organization, err := apiClient.GetOrganization(d.Id())
-	if err != nil {
-		return diag.FromErr(err)
+func (r *OrganizationResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
 	}
 
-	d.Set("name", organization.Name)
+	client, ok := req.ProviderData.(pritunl.Client)
 
-	return nil
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected Resource Configure Type",
+			fmt.Sprintf("Expected pritunl.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+		)
+
+		return
+	}
+
+	r.client = client
 }
 
-func resourceDeleteOrganization(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	apiClient := meta.(pritunl.Client)
+func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var data OrganizationResourceModel
 
-	err := apiClient.DeleteOrganization(d.Id())
-	if err != nil {
-		return diag.FromErr(err)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
-	d.SetId("")
+	organization, err := r.client.CreateOrganization(data.Name.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create organization, got error: %s", err))
+		return
+	}
 
-	return nil
+	data.ID = types.StringValue(organization.ID)
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-func resourceUpdateOrganization(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	apiClient := meta.(pritunl.Client)
+func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var data OrganizationResourceModel
 
-	organization, err := apiClient.GetOrganization(d.Id())
+	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	organization, err := r.client.GetOrganization(data.ID.ValueString())
 	if err != nil {
-		return diag.FromErr(err)
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read organization, got error: %s", err))
+		return
 	}
 
-	if d.HasChange("name") {
-		organization.Name = d.Get("name").(string)
+	data.Name = types.StringValue(organization.Name)
 
-		err = apiClient.UpdateOrganization(d.Id(), organization)
-		if err != nil {
-			return diag.FromErr(err)
-		}
-	}
-
-	return nil
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-func resourceCreateOrganization(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	apiClient := meta.(pritunl.Client)
+func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var data OrganizationResourceModel
 
-	organization, err := apiClient.CreateOrganization(d.Get("name").(string))
-	if err != nil {
-		return diag.FromErr(err)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
-	d.SetId(organization.ID)
+	organization, err := r.client.GetOrganization(data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to get organization for update, got error: %s", err))
+		return
+	}
 
-	return nil
+	organization.Name = data.Name.ValueString()
+
+	err = r.client.UpdateOrganization(data.ID.ValueString(), organization)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update organization, got error: %s", err))
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+func (r *OrganizationResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var data OrganizationResourceModel
+
+	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	err := r.client.DeleteOrganization(data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete organization, got error: %s", err))
+		return
+	}
+}
+
+func (r *OrganizationResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

@@ -1,5 +1,5 @@
 build:
-	go build -gcflags="all=-N -l" -o ~/.terraform.d/plugins/registry.terraform.io/disc/pritunl/0.0.1/darwin_amd64/terraform-provider-pritunl_v0.0.1 main.go
+	go build -gcflags="all=-N -l" -o ~/.terraform.d/plugins/registry.terraform.io/disc/pritunl/2.0.0-dev/linux_amd64/terraform-provider-pritunl_v2.0.0-dev main.go
 
 test:
 	@docker rm tf_pritunl_acc_test -f || true
@@ -9,7 +9,7 @@ test:
 		-p 80:80/tcp \
 		-p 443:443/tcp \
 		-p 27017:27017/tcp \
-		ghcr.io/jippi/docker-pritunl:1.32.3602.80
+		ghcr.io/jippi/docker-pritunl:1.32.4388.46
 
 	sleep 20
 
