@@ -1,6 +1,6 @@
 module github.com/disc/terraform-provider-pritunl
 
-go 1.18
+go 1.21
 
 require (
 	github.com/hashicorp/terraform-plugin-framework v1.16.0
