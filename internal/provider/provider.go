@@ -44,22 +44,22 @@ func (p *pritunlProvider) Schema(ctx context.Context, req provider.SchemaRequest
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
 			"url": schema.StringAttribute{
-				Required:    true,
-				Description: "The URL of the Pritunl server.",
+				Optional:    true,
+				Description: "The URL of the Pritunl server. Can also be set via PRITUNL_URL environment variable.",
 			},
 			"token": schema.StringAttribute{
-				Required:    true,
+				Optional:    true,
 				Sensitive:   true,
-				Description: "The API token for the Pritunl server.",
+				Description: "The API token for the Pritunl server. Can also be set via PRITUNL_TOKEN environment variable.",
 			},
 			"secret": schema.StringAttribute{
-				Required:    true,
+				Optional:    true,
 				Sensitive:   true,
-				Description: "The API secret for the Pritunl server.",
+				Description: "The API secret for the Pritunl server. Can also be set via PRITUNL_SECRET environment variable.",
 			},
 			"insecure": schema.BoolAttribute{
-				Required:    true,
-				Description: "Whether to skip TLS verification.",
+				Optional:    true,
+				Description: "Whether to skip TLS verification. Can also be set via PRITUNL_INSECURE environment variable.",
 			},
 			"connection_check": schema.BoolAttribute{
 				Optional:    true,
