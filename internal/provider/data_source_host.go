@@ -11,6 +11,64 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+// hostAttributes returns the common host attributes schema used by both host and hosts data sources
+func hostAttributes() map[string]schema.Attribute {
+	return map[string]schema.Attribute{
+		"id": schema.StringAttribute{
+			MarkdownDescription: "Host identifier",
+			Computed:            true,
+		},
+		"hostname": schema.StringAttribute{
+			MarkdownDescription: "Hostname",
+			Computed:            true,
+		},
+		"name": schema.StringAttribute{
+			MarkdownDescription: "Name of host",
+			Computed:            true,
+		},
+		"public_addr": schema.StringAttribute{
+			MarkdownDescription: "Public IP address or domain name of the host",
+			Computed:            true,
+		},
+		"public_addr6": schema.StringAttribute{
+			MarkdownDescription: "Public IPv6 address or domain name of the host",
+			Computed:            true,
+		},
+		"routed_subnet6": schema.StringAttribute{
+			MarkdownDescription: "IPv6 subnet that is routed to the host",
+			Computed:            true,
+		},
+		"routed_subnet6_wg": schema.StringAttribute{
+			MarkdownDescription: "IPv6 WG subnet that is routed to the host",
+			Computed:            true,
+		},
+		"local_addr": schema.StringAttribute{
+			MarkdownDescription: "Local network address for server",
+			Computed:            true,
+		},
+		"local_addr6": schema.StringAttribute{
+			MarkdownDescription: "Local IPv6 network address for server",
+			Computed:            true,
+		},
+		"availability_group": schema.StringAttribute{
+			MarkdownDescription: "Availability group for host. Replicated servers will only be replicated to a group of hosts in the same availability group",
+			Computed:            true,
+		},
+		"link_addr": schema.StringAttribute{
+			MarkdownDescription: "IP address or domain used when linked servers connect to a linked server on this host",
+			Computed:            true,
+		},
+		"sync_address": schema.StringAttribute{
+			MarkdownDescription: "IP address or domain used by users when syncing configuration. This is needed when using a load balancer.",
+			Computed:            true,
+		},
+		"status": schema.StringAttribute{
+			MarkdownDescription: "Status of host",
+			Computed:            true,
+		},
+	}
+}
+
 // Ensure HostDataSource implements datasource.DataSource interface at compile time
 var _ datasource.DataSource = &HostDataSource{}
 
@@ -43,63 +101,16 @@ func (d *HostDataSource) Metadata(ctx context.Context, req datasource.MetadataRe
 }
 
 func (d *HostDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	attributes := hostAttributes()
+	// Override hostname to be Required instead of Computed for single host data source
+	attributes["hostname"] = schema.StringAttribute{
+		MarkdownDescription: "Hostname",
+		Required:            true,
+	}
+
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Use this data source to get information about the Pritunl hosts.",
-
-		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{
-				MarkdownDescription: "Host identifier",
-				Computed:            true,
-			},
-			"hostname": schema.StringAttribute{
-				MarkdownDescription: "Hostname",
-				Required:            true,
-			},
-			"name": schema.StringAttribute{
-				MarkdownDescription: "Name of host",
-				Computed:            true,
-			},
-			"public_addr": schema.StringAttribute{
-				MarkdownDescription: "Public IP address or domain name of the host",
-				Computed:            true,
-			},
-			"public_addr6": schema.StringAttribute{
-				MarkdownDescription: "Public IPv6 address or domain name of the host",
-				Computed:            true,
-			},
-			"routed_subnet6": schema.StringAttribute{
-				MarkdownDescription: "IPv6 subnet that is routed to the host",
-				Computed:            true,
-			},
-			"routed_subnet6_wg": schema.StringAttribute{
-				MarkdownDescription: "IPv6 WG subnet that is routed to the host",
-				Computed:            true,
-			},
-			"local_addr": schema.StringAttribute{
-				MarkdownDescription: "Local network address for server",
-				Computed:            true,
-			},
-			"local_addr6": schema.StringAttribute{
-				MarkdownDescription: "Local IPv6 network address for server",
-				Computed:            true,
-			},
-			"availability_group": schema.StringAttribute{
-				MarkdownDescription: "Availability group for host. Replicated servers will only be replicated to a group of hosts in the same availability group",
-				Computed:            true,
-			},
-			"link_addr": schema.StringAttribute{
-				MarkdownDescription: "IP address or domain used when linked servers connect to a linked server on this host",
-				Computed:            true,
-			},
-			"sync_address": schema.StringAttribute{
-				MarkdownDescription: "IP address or domain used by users when syncing configuration. This is needed when using a load balancer.",
-				Computed:            true,
-			},
-			"status": schema.StringAttribute{
-				MarkdownDescription: "Status of host",
-				Computed:            true,
-			},
-		},
+		Attributes:          attributes,
 	}
 }
 
