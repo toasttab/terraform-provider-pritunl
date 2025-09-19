@@ -305,69 +305,84 @@ func (r *UserResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 }
 
 func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var data UserResourceModel
+	var plan, state UserResourceModel
 
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	// Get both plan and current state for comparison
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
+	// Start with basic user data that's always updated
 	user := pritunl.User{
-		Name:            data.Name.ValueString(),
-		OrganizationID:  data.OrganizationID.ValueString(),
-		Email:           data.Email.ValueString(),
-		Disabled:        data.Disabled.ValueBool(),
-		ClientToClient:  data.ClientToClient.ValueBool(),
-		AuthType:        data.AuthType.ValueString(),
-		DNSSuffix:       data.DNSSuffix.ValueString(),
-		BypassSecondary: data.BypassSecondary.ValueBool(),
-		Pin:             data.Pin.ValueString(),
+		Name:            plan.Name.ValueString(),
+		OrganizationID:  plan.OrganizationID.ValueString(),
+		Email:           plan.Email.ValueString(),
+		Disabled:        plan.Disabled.ValueBool(),
+		ClientToClient:  plan.ClientToClient.ValueBool(),
+		AuthType:        plan.AuthType.ValueString(),
+		DNSSuffix:       plan.DNSSuffix.ValueString(),
+		BypassSecondary: plan.BypassSecondary.ValueBool(),
+		Pin:             plan.Pin.ValueString(),
 	}
 
-	if !data.Groups.IsNull() && !data.Groups.IsUnknown() {
-		var groups []string
-		resp.Diagnostics.Append(data.Groups.ElementsAs(ctx, &groups, false)...)
-		if resp.Diagnostics.HasError() {
-			return
+	// Only update groups if they have changed
+	if !plan.Groups.Equal(state.Groups) {
+		if !plan.Groups.IsNull() && !plan.Groups.IsUnknown() {
+			var groups []string
+			resp.Diagnostics.Append(plan.Groups.ElementsAs(ctx, &groups, false)...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			user.Groups = groups
 		}
-		user.Groups = groups
 	}
 
-	if !data.NetworkLinks.IsNull() && !data.NetworkLinks.IsUnknown() {
-		var networkLinks []string
-		resp.Diagnostics.Append(data.NetworkLinks.ElementsAs(ctx, &networkLinks, false)...)
-		if resp.Diagnostics.HasError() {
-			return
+	// Only update network links if they have changed
+	if !plan.NetworkLinks.Equal(state.NetworkLinks) {
+		if !plan.NetworkLinks.IsNull() && !plan.NetworkLinks.IsUnknown() {
+			var networkLinks []string
+			resp.Diagnostics.Append(plan.NetworkLinks.ElementsAs(ctx, &networkLinks, false)...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			user.NetworkLinks = networkLinks
 		}
-		user.NetworkLinks = networkLinks
 	}
 
-	if !data.MacAddresses.IsNull() && !data.MacAddresses.IsUnknown() {
-		var macAddresses []string
-		resp.Diagnostics.Append(data.MacAddresses.ElementsAs(ctx, &macAddresses, false)...)
-		if resp.Diagnostics.HasError() {
-			return
+	// Only update MAC addresses if they have changed
+	if !plan.MacAddresses.Equal(state.MacAddresses) {
+		if !plan.MacAddresses.IsNull() && !plan.MacAddresses.IsUnknown() {
+			var macAddresses []string
+			resp.Diagnostics.Append(plan.MacAddresses.ElementsAs(ctx, &macAddresses, false)...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			user.MacAddresses = macAddresses
 		}
-		user.MacAddresses = macAddresses
 	}
 
-	if !data.DNSServers.IsNull() && !data.DNSServers.IsUnknown() {
-		var dnsServers []string
-		resp.Diagnostics.Append(data.DNSServers.ElementsAs(ctx, &dnsServers, false)...)
-		if resp.Diagnostics.HasError() {
-			return
+	// Only update DNS servers if they have changed
+	if !plan.DNSServers.Equal(state.DNSServers) {
+		if !plan.DNSServers.IsNull() && !plan.DNSServers.IsUnknown() {
+			var dnsServers []string
+			resp.Diagnostics.Append(plan.DNSServers.ElementsAs(ctx, &dnsServers, false)...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			user.DNSServers = dnsServers
 		}
-		user.DNSServers = dnsServers
 	}
 
-	err := r.client.UpdateUser(data.OrganizationID.ValueString(), data.ID.ValueString(), user)
+	err := r.client.UpdateUser(plan.OrganizationID.ValueString(), plan.ID.ValueString(), user)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update user, got error: %s", err))
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
 func (r *UserResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
