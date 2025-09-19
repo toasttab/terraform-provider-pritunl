@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+// Ensure HostDataSource implements datasource.DataSource interface at compile time
 var _ datasource.DataSource = &HostDataSource{}
 
 func NewHostDataSource() datasource.DataSource {
