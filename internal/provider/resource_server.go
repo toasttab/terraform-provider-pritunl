@@ -669,7 +669,6 @@ func (r *ServerResource) Create(ctx context.Context, req resource.CreateRequest,
 	data.SSOAuth = types.BoolValue(serverResponse.SsoAuth)
 	data.DeviceAuth = types.BoolValue(serverResponse.DeviceAuth)
 	data.DynamicFirewall = types.BoolValue(serverResponse.DynamicFirewall)
-	data.RouteDNS = types.BoolValue(true)
 
 	if len(serverResponse.Groups) > 0 {
 		groupsAttr := make([]attr.Value, len(serverResponse.Groups))
@@ -795,7 +794,6 @@ func (r *ServerResource) Read(ctx context.Context, req resource.ReadRequest, res
 	data.SSOAuth = types.BoolValue(server.SsoAuth)
 	data.DeviceAuth = types.BoolValue(server.DeviceAuth)
 	data.DynamicFirewall = types.BoolValue(server.DynamicFirewall)
-	data.RouteDNS = types.BoolValue(true)
 
 	if len(server.Groups) > 0 {
 		groupsAttr := make([]attr.Value, len(server.Groups))
