@@ -384,11 +384,11 @@ func TestAccPritunlServer(t *testing.T) {
 				Steps: []resource.TestStep{
 					{
 						Config:      testGetServerConfigWithNetworkAndPort(serverName, missedSubnetNetwork, port),
-						ExpectError: regexp.MustCompile("Client Error"),
+						ExpectError: regexp.MustCompile("Unable to create server"),
 					},
 					{
 						Config:      testGetServerConfigWithNetworkAndPort(serverName, invalidNetwork, port),
-						ExpectError: regexp.MustCompile("Client Error"),
+						ExpectError: regexp.MustCompile("Unable to create server"),
 					},
 				},
 			})
@@ -431,7 +431,7 @@ func TestAccPritunlServer(t *testing.T) {
 				Steps: []resource.TestStep{
 					{
 						Config:      testPritunlServerConfigWithAttachedRoute(serverName, invalidRouteNetwork),
-						ExpectError: regexp.MustCompile("Client Error"),
+						ExpectError: regexp.MustCompile("Unable to create server"),
 					},
 				},
 			})
@@ -451,7 +451,7 @@ func TestAccPritunlServer(t *testing.T) {
 				Steps: []resource.TestStep{
 					{
 						Config:      testGetServerConfigWithBindAddress(serverName, network, invalidBindAddress, port),
-						ExpectError: regexp.MustCompile("Client Error"),
+						ExpectError: regexp.MustCompile("Unable to create server"),
 					},
 					{
 						Config: testGetServerConfigWithBindAddress(serverName, network, correctBindAddress, port),
