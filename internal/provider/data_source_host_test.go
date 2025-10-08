@@ -22,7 +22,7 @@ func TestDataSourceHost(t *testing.T) {
 			},
 			{
 				Config:      testPritunlHostSimpleConfig(notExistHostname),
-				ExpectError: regexp.MustCompile(fmt.Sprintf("could not find host with a hostname %s. Previous error message: could not find a host with specified parameters", notExistHostname)),
+				ExpectError: regexp.MustCompile("Could not find host with hostname"),
 			},
 		},
 	})

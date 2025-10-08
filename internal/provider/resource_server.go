@@ -865,16 +865,16 @@ func (r *ServerResource) Read(ctx context.Context, req resource.ReadRequest, res
 		}
 	}
 
+	attachedRoutes, err := r.client.GetRoutesByServer(data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to get routes for server, got error: %s", err))
+		return
+	}
+	
 	if !data.Route.IsNull() && !data.Route.IsUnknown() {
 		var currentRoutes []types.Object
 		resp.Diagnostics.Append(data.Route.ElementsAs(ctx, &currentRoutes, false)...)
 		if resp.Diagnostics.HasError() {
-			return
-		}
-		
-		attachedRoutes, err := r.client.GetRoutesByServer(data.ID.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to get routes for server, got error: %s", err))
 			return
 		}
 		
@@ -943,6 +943,46 @@ func (r *ServerResource) Read(ctx context.Context, req resource.ReadRequest, res
 				},
 			})
 		}
+	} else if len(attachedRoutes) > 0 {
+		validRoutes := make([]attr.Value, 0)
+		for _, attachedRoute := range attachedRoutes {
+			routeObjValue, _ := types.ObjectValue(map[string]attr.Type{
+				"network":       types.StringType,
+				"comment":       types.StringType,
+				"nat":           types.BoolType,
+				"nat_interface": types.StringType,
+				"nat_netmap":    types.StringType,
+				"advertise":     types.BoolType,
+				"vpc_region":    types.StringType,
+				"vpc_id":        types.StringType,
+				"net_gateway":   types.BoolType,
+			}, map[string]attr.Value{
+				"network":       types.StringValue(attachedRoute.Network),
+				"comment":       types.StringValue(attachedRoute.Comment),
+				"nat":           types.BoolValue(attachedRoute.Nat),
+				"nat_interface": types.StringValue(attachedRoute.NatInterface),
+				"nat_netmap":    types.StringValue(attachedRoute.NatNetmap),
+				"advertise":     types.BoolValue(attachedRoute.Advertise),
+				"vpc_region":    types.StringValue(attachedRoute.VpcRegion),
+				"vpc_id":        types.StringValue(attachedRoute.VpcID),
+				"net_gateway":   types.BoolValue(attachedRoute.NetGateway),
+			})
+			validRoutes = append(validRoutes, routeObjValue)
+		}
+		
+		data.Route, _ = types.ListValue(types.ObjectType{
+			AttrTypes: map[string]attr.Type{
+				"network":       types.StringType,
+				"comment":       types.StringType,
+				"nat":           types.BoolType,
+				"nat_interface": types.StringType,
+				"nat_netmap":    types.StringType,
+				"advertise":     types.BoolType,
+				"vpc_region":    types.StringType,
+				"vpc_id":        types.StringType,
+				"net_gateway":   types.BoolType,
+			},
+		}, validRoutes)
 	} else {
 		data.Route = types.ListNull(types.ObjectType{
 			AttrTypes: map[string]attr.Type{
@@ -1121,6 +1161,79 @@ func (r *ServerResource) Update(ctx context.Context, req resource.UpdateRequest,
 		data.OrganizationIDs = types.ListNull(types.StringType)
 	}
 
+	var planRoutes, stateRoutes []types.Object
+	if !data.Route.IsNull() && !data.Route.IsUnknown() {
+		resp.Diagnostics.Append(data.Route.ElementsAs(ctx, &planRoutes, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	if !currentState.Route.IsNull() && !currentState.Route.IsUnknown() {
+		resp.Diagnostics.Append(currentState.Route.ElementsAs(ctx, &stateRoutes, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	for _, stateRouteObj := range stateRoutes {
+		stateRouteAttrs := stateRouteObj.Attributes()
+		stateNetwork := stateRouteAttrs["network"].(types.String).ValueString()
+		
+		found := false
+		for _, planRouteObj := range planRoutes {
+			planRouteAttrs := planRouteObj.Attributes()
+			planNetwork := planRouteAttrs["network"].(types.String).ValueString()
+			if stateNetwork == planNetwork {
+				found = true
+				break
+			}
+		}
+		
+		if !found {
+			stateRoute := pritunl.Route{
+				Network: stateNetwork,
+			}
+			err := r.client.DeleteRouteFromServer(data.ID.ValueString(), stateRoute)
+			if err != nil {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete route %s from server, got error: %s", stateNetwork, err))
+				return
+			}
+		}
+	}
+
+	for _, planRouteObj := range planRoutes {
+		planRouteAttrs := planRouteObj.Attributes()
+		planRoute := pritunl.Route{
+			Network:      planRouteAttrs["network"].(types.String).ValueString(),
+			Comment:      planRouteAttrs["comment"].(types.String).ValueString(),
+			Nat:          planRouteAttrs["nat"].(types.Bool).ValueBool(),
+			NatInterface: planRouteAttrs["nat_interface"].(types.String).ValueString(),
+			NatNetmap:    planRouteAttrs["nat_netmap"].(types.String).ValueString(),
+			Advertise:    planRouteAttrs["advertise"].(types.Bool).ValueBool(),
+			VpcRegion:    planRouteAttrs["vpc_region"].(types.String).ValueString(),
+			VpcID:        planRouteAttrs["vpc_id"].(types.String).ValueString(),
+			NetGateway:   planRouteAttrs["net_gateway"].(types.Bool).ValueBool(),
+		}
+
+		found := false
+		for _, stateRouteObj := range stateRoutes {
+			stateRouteAttrs := stateRouteObj.Attributes()
+			stateNetwork := stateRouteAttrs["network"].(types.String).ValueString()
+			if planRoute.Network == stateNetwork {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			err := r.client.AddRouteToServer(data.ID.ValueString(), planRoute)
+			if err != nil {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to add route %s to server, got error: %s", planRoute.Network, err))
+				return
+			}
+		}
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
