@@ -2,8 +2,9 @@ package provider
 
 import (
 	"fmt"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
 func TestAccPritunlUser(t *testing.T) {
@@ -20,7 +21,7 @@ func TestAccPritunlUser(t *testing.T) {
 
 		resource.Test(t, resource.TestCase{
 			PreCheck:          func() { preCheck(t) },
-			ProviderFactories: providerFactories,
+			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 			Steps: []resource.TestStep{
 				{
 					Config: testPritunlUserConfig(username, orgName),
@@ -44,7 +45,7 @@ func TestAccPritunlUser(t *testing.T) {
 
 		resource.Test(t, resource.TestCase{
 			PreCheck:          func() { preCheck(t) },
-			ProviderFactories: providerFactories,
+			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 			Steps: []resource.TestStep{
 				{
 					Config: testPritunlUserConfigWithPin(username, orgName, pin),

@@ -3,1160 +3,1261 @@ package provider
 import (
 	"context"
 	"fmt"
-	"net"
-	"strings"
+	"regexp"
 
 	"github.com/disc/terraform-provider-pritunl/internal/pritunl"
-	"github.com/hashicorp/go-cty/cty"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-func resourceServer() *schema.Resource {
-	return &schema.Resource{
-		Description: "The organization resource allows managing information about a particular Pritunl server.",
-		Schema: map[string]*schema.Schema{
-			"name": {
-				Type:        schema.TypeString,
-				Required:    true,
-				Description: "The name of the server",
-			},
-			"protocol": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Description:  "The protocol for the server",
-				Default:      "udp",
-				ValidateFunc: validation.StringInSlice([]string{"udp", "tcp"}, false),
-			},
-			"cipher": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Description:  "The cipher for the server",
-				Default:      "aes128",
-				ValidateFunc: validation.StringInSlice([]string{"none", "bf128", "bf256", "aes128", "aes192", "aes256"}, false),
-			},
-			"hash": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Description:  "The hash for the server",
-				Default:      "sha1",
-				ValidateFunc: validation.StringInSlice([]string{"none", "md5", "sha1", "sha256", "sha512"}, false),
-			},
-			"port": {
-				Type:         schema.TypeInt,
-				Required:     false,
-				Optional:     true,
-				Computed:     true,
-				Description:  "The port for the server",
-				ValidateFunc: validation.IntBetween(1, 65535),
-			},
-			"network": {
-				Type:        schema.TypeString,
-				Required:    false,
-				Optional:    true,
-				Computed:    true,
-				Description: "Network address for the private network that will be created for clients. This network cannot conflict with any existing local networks",
+var _ resource.Resource = &ServerResource{}
+var _ resource.ResourceWithImportState = &ServerResource{}
 
-				ValidateFunc: func(i interface{}, s string) ([]string, []error) {
-					// [10,172,192].[0-255,16-31,168].[0-255].0/[8-24]
-					// 10.0.0.0/8
-					// 172.16.0.0/12
-					// 192.168.0.0/16
-					warnings := make([]string, 0)
-					errors := make([]error, 0)
+func NewServerResource() resource.Resource {
+	return &ServerResource{}
+}
 
-					_, actualIpNet, err := net.ParseCIDR(i.(string))
-					if err != nil {
-						errors = append(errors, err)
+type ServerResource struct {
+	client pritunl.Client
+}
 
-						return warnings, errors
-					}
+type ServerResourceModel struct {
+	ID                types.String   `tfsdk:"id"`
+	Name              types.String   `tfsdk:"name"`
+	Protocol          types.String   `tfsdk:"protocol"`
+	Cipher            types.String   `tfsdk:"cipher"`
+	Hash              types.String   `tfsdk:"hash"`
+	Port              types.Int64    `tfsdk:"port"`
+	Network           types.String   `tfsdk:"network"`
+	WG                types.Bool     `tfsdk:"wg"`
+	PortWG            types.Int64    `tfsdk:"port_wg"`
+	NetworkWG         types.String   `tfsdk:"network_wg"`
+	NetworkMode       types.String   `tfsdk:"network_mode"`
+	NetworkStart      types.String   `tfsdk:"network_start"`
+	NetworkEnd        types.String   `tfsdk:"network_end"`
+	RestrictRoutes    types.Bool     `tfsdk:"restrict_routes"`
+	IPv6              types.Bool     `tfsdk:"ipv6"`
+	IPv6Firewall      types.Bool     `tfsdk:"ipv6_firewall"`
+	BindAddress       types.String   `tfsdk:"bind_address"`
+	DHParamBits       types.Int64    `tfsdk:"dh_param_bits"`
+	Groups            types.List     `tfsdk:"groups"`
+	MultiDevice       types.Bool     `tfsdk:"multi_device"`
+	DNSServers        types.List     `tfsdk:"dns_servers"`
+	SearchDomain      types.String   `tfsdk:"search_domain"`
+	OTPAuth           types.Bool     `tfsdk:"otp_auth"`
+	LZOCompression    types.Bool     `tfsdk:"lzo_compression"`
+	InterClient       types.Bool     `tfsdk:"inter_client"`
+	PingInterval      types.Int64    `tfsdk:"ping_interval"`
+	PingTimeout       types.Int64    `tfsdk:"ping_timeout"`
+	LinkPingInterval  types.Int64    `tfsdk:"link_ping_interval"`
+	LinkPingTimeout   types.Int64    `tfsdk:"link_ping_timeout"`
+	InactiveTimeout   types.Int64    `tfsdk:"inactive_timeout"`
+	SessionTimeout    types.Int64    `tfsdk:"session_timeout"`
+	AllowedDevices    types.String   `tfsdk:"allowed_devices"`
+	MaxClients        types.Int64    `tfsdk:"max_clients"`
+	MaxDevices        types.Int64    `tfsdk:"max_devices"`
+	ReplicaCount      types.Int64    `tfsdk:"replica_count"`
+	VXLAN             types.Bool     `tfsdk:"vxlan"`
+	DNSMapping        types.Bool     `tfsdk:"dns_mapping"`
+	Debug             types.Bool     `tfsdk:"debug"`
+	RouteDNS          types.Bool     `tfsdk:"route_dns"`
+	SSOAuth           types.Bool     `tfsdk:"sso_auth"`
+	DeviceAuth        types.Bool     `tfsdk:"device_auth"`
+	DynamicFirewall   types.Bool     `tfsdk:"dynamic_firewall"`
+	Route             types.List     `tfsdk:"route"`
+	OrganizationIDs   types.List     `tfsdk:"organization_ids"`
+}
 
-					expectedIpNets := []string{
-						"10.0.0.0/8",
-						"172.16.0.0/12",
-						"192.168.0.0/16",
-					}
+func (r *ServerResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_server"
+}
 
-					found := false
-					for _, v := range expectedIpNets {
-						_, expectedIpNet, _ := net.ParseCIDR(v)
-						if actualIpNet.Contains(expectedIpNet.IP) || expectedIpNet.Contains(actualIpNet.IP) {
-							found = true
-							break
-						}
-					}
+func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		MarkdownDescription: "The server resource allows managing information about a particular Pritunl server.",
 
-					if !found {
-						errors = append(errors, fmt.Errorf("provided subnet %s does not belong to expected subnets %s", actualIpNet.String(), strings.Join(expectedIpNets, ", ")))
-					}
-
-					return warnings, errors
+		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Server identifier",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"bind_address": {
-				Type:        schema.TypeString,
-				Required:    false,
-				Optional:    true,
-				Description: "Network address for the private network that will be created for clients. This network cannot conflict with any existing local networks",
-				ValidateFunc: func(i interface{}, s string) ([]string, []error) {
-					return validation.IsIPAddress(i, s)
+			"name": schema.StringAttribute{
+				MarkdownDescription: "The name of the server.",
+				Required:            true,
+			},
+			"protocol": schema.StringAttribute{
+				MarkdownDescription: "The protocol of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("udp"),
+				Validators: []validator.String{
+					stringvalidator.OneOf("udp", "tcp"),
 				},
 			},
-			"network_wg": {
-				Type:         schema.TypeString,
-				Required:     false,
-				Optional:     true,
-				Description:  "Network address for the private network that will be created for clients. This network cannot conflict with any existing local networks",
-				RequiredWith: []string{"port_wg"},
-				ValidateFunc: func(i interface{}, s string) ([]string, []error) {
-					// [10,172,192].[0-255,16-31,168].[0-255].0/[8-24]
-					// 10.0.0.0/8
-					// 172.16.0.0/12
-					// 192.168.0.0/16
-					warnings := make([]string, 0)
-					errors := make([]error, 0)
-
-					_, actualIpNet, err := net.ParseCIDR(i.(string))
-					if err != nil {
-						errors = append(errors, err)
-
-						return warnings, errors
-					}
-
-					expectedIpNets := []string{
-						"10.0.0.0/8",
-						"172.16.0.0/12",
-						"192.168.0.0/16",
-					}
-
-					found := false
-					for _, v := range expectedIpNets {
-						_, expectedIpNet, _ := net.ParseCIDR(v)
-						if actualIpNet.Contains(expectedIpNet.IP) || expectedIpNet.Contains(actualIpNet.IP) {
-							found = true
-							break
-						}
-					}
-
-					if !found {
-						errors = append(errors, fmt.Errorf("provided subnet %s does not belong to expected subnets %s", actualIpNet.String(), strings.Join(expectedIpNets, ", ")))
-					}
-
-					return warnings, errors
+			"cipher": schema.StringAttribute{
+				MarkdownDescription: "The cipher of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("aes128"),
+				Validators: []validator.String{
+					stringvalidator.OneOf("none", "bf128", "bf256", "aes128", "aes192", "aes256"),
 				},
 			},
-			"port_wg": {
-				Type:         schema.TypeInt,
-				Required:     false,
-				Optional:     true,
-				Description:  "Network address for the private network that will be created for clients. This network cannot conflict with any existing local networks",
-				RequiredWith: []string{"network_wg"},
-				ValidateFunc: validation.IntBetween(1, 65535),
-				// TODO: Add validation
-			},
-			"groups": {
-				Type: schema.TypeList,
-				Elem: &schema.Schema{
-					Type: schema.TypeString,
-					ValidateDiagFunc: func(v interface{}, path cty.Path) diag.Diagnostics {
-						groupName := v.(string)
-						if strings.Contains(groupName, " ") {
-							return diag.Diagnostics{
-								{
-									Severity:      diag.Error,
-									Summary:       "Group name must not contain spaces",
-									Detail:        groupName + " contains spaces",
-									AttributePath: cty.Path{cty.GetAttrStep{Name: "groups"}},
-								},
-							}
-						}
-
-						return nil
-					},
+			"hash": schema.StringAttribute{
+				MarkdownDescription: "The hash of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("sha1"),
+				Validators: []validator.String{
+					stringvalidator.OneOf("none", "md5", "sha1", "sha256", "sha512"),
 				},
-				Required:    false,
-				Optional:    true,
-				Description: "Enter list of groups to allow connections from. Names are case sensitive. If empty all groups will able to connect",
 			},
-			"dns_servers": {
-				Type: schema.TypeList,
-				Elem: &schema.Schema{
-					Type: schema.TypeString,
-					ValidateFunc: func(i interface{}, s string) ([]string, []error) {
-						return validation.IsIPAddress(i, s)
-					},
+			"port": schema.Int64Attribute{
+				MarkdownDescription: "The port of the server.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
 				},
-				Required:    false,
-				Optional:    true,
-				Description: "Enter list of DNS servers applied on the client",
-			},
-			"sso_auth": {
-				Type:        schema.TypeBool,
-				Required:    false,
-				Optional:    true,
-				Description: "Require client to authenticate with single sign-on provider on each connection using web browser. Requires client to have access to Pritunl web server port and running updated Pritunl Client. Single sign-on provider must already be configured for this feature to work properly",
-			},
-			"otp_auth": {
-				Type:        schema.TypeBool,
-				Required:    false,
-				Optional:    true,
-				Description: "Enables two-step authentication using Google Authenticator. Verification code is entered as the user password when connecting",
-			},
-			"device_auth": {
-				Type:        schema.TypeBool,
-				Required:    false,
-				Optional:    true,
-				Description: "Require administrator to approve every client device using TPM or Apple Secure Enclave",
-			},
-			"dynamic_firewall": {
-				Type:        schema.TypeBool,
-				Required:    false,
-				Optional:    true,
-				Description: "Block VPN server ports by default and open port for client IP address after authenticating with HTTPS request",
-			},
-			"ipv6": {
-				Type:        schema.TypeBool,
-				Required:    false,
-				Optional:    true,
-				Description: "Enables IPv6 on server, requires IPv6 network interface",
-			},
-			"dh_param_bits": {
-				Type:         schema.TypeInt,
-				Required:     false,
-				Optional:     true,
-				Computed:     true,
-				Description:  "Size of DH parameters",
-				ValidateFunc: validation.IntInSlice([]int{1024, 1536, 2048, 2048, 3072, 4096}),
-				// TODO: Cover the case " Generating DH parameters, please wait..." before start the server
-			},
-			"ping_interval": {
-				Type:         schema.TypeInt,
-				Required:     false,
-				Optional:     true,
-				Computed:     true,
-				Description:  "Interval to ping client",
-				ValidateFunc: validation.IntAtLeast(1),
-			},
-			"ping_timeout": {
-				Type:        schema.TypeInt,
-				Required:    false,
-				Optional:    true,
-				Computed:    true,
-				Description: "Timeout for client ping. Must be greater then ping interval",
-				ValidateFunc: validation.All(
-					validation.IntAtLeast(1),
-					//func(i interface{}, s string) ([]string, []error) {
-					//	TODO: Implement "Must be greater then ping interval" rule
-					//},
-				),
-			},
-			"link_ping_interval": {
-				Type:         schema.TypeInt,
-				Required:     false,
-				Optional:     true,
-				Computed:     true,
-				Description:  "Time in between pings used when multiple users have the same network link to failover to another user when one network link fails.",
-				ValidateFunc: validation.IntAtLeast(1),
-			},
-			"link_ping_timeout": {
-				Type:         schema.TypeInt,
-				Required:     false,
-				Optional:     true,
-				Computed:     true,
-				Description:  "Optional, ping timeout used when multiple users have the same network link to failover to another user when one network link fails..",
-				ValidateFunc: validation.IntAtLeast(0),
-			},
-			"session_timeout": {
-				Type:         schema.TypeInt,
-				Required:     false,
-				Optional:     true,
-				Description:  "Disconnect users after the specified number of seconds.",
-				ValidateFunc: validation.IntAtLeast(1),
-			},
-			"inactive_timeout": {
-				Type:         schema.TypeInt,
-				Required:     false,
-				Optional:     true,
-				Description:  "Disconnects users after the specified number of seconds of inactivity.",
-				ValidateFunc: validation.IntAtLeast(1),
-			},
-			"max_clients": {
-				Type:         schema.TypeInt,
-				Required:     false,
-				Optional:     true,
-				Computed:     true,
-				Description:  "Maximum number of clients connected to a server or to each server replica.",
-				ValidateFunc: validation.IntAtLeast(1),
-			},
-			"network_mode": {
-				Type:         schema.TypeString,
-				Required:     false,
-				Optional:     true,
-				Description:  "Sets network mode. Bridged mode is not recommended using it will impact performance and client support will be limited.",
-				ValidateFunc: validation.StringInSlice([]string{"tunnel", "bridge"}, false),
-			},
-			"network_start": {
-				Type:        schema.TypeString,
-				Required:    false,
-				Optional:    true,
-				Description: "Starting network address for the bridged VPN client IP addresses. Must be in the subnet of the server network.",
-				ValidateFunc: func(i interface{}, s string) ([]string, []error) {
-					return validation.IsIPAddress(i, s)
+				Validators: []validator.Int64{
+					int64validator.Between(1, 65535),
 				},
-				RequiredWith: []string{"network_mode", "network_end"},
 			},
-			"network_end": {
-				Type:        schema.TypeString,
-				Required:    false,
-				Optional:    true,
-				Description: "Ending network address for the bridged VPN client IP addresses. Must be in the subnet of the server network.",
-				ValidateFunc: func(i interface{}, s string) ([]string, []error) {
-					return validation.IsIPAddress(i, s)
+			"network": schema.StringAttribute{
+				MarkdownDescription: "The network of the server.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
 				},
-				RequiredWith: []string{"network_mode", "network_start"},
 			},
-			"mss_fix": {
-				Type:        schema.TypeInt,
-				Required:    false,
-				Optional:    true,
-				Description: "MSS fix value",
+			"wg": schema.BoolAttribute{
+				MarkdownDescription: "Enable WireGuard.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
 			},
-			"max_devices": {
-				Type:         schema.TypeInt,
-				Required:     false,
-				Optional:     true,
-				Description:  "Maximum number of devices per client connected to a server.",
-				ValidateFunc: validation.IntAtLeast(0),
-			},
-			"pre_connect_msg": {
-				Type:        schema.TypeString,
-				Required:    false,
-				Optional:    true,
-				Description: "Messages that will be shown after connect to the server",
-			},
-			"allowed_devices": {
-				Type:         schema.TypeString,
-				Required:     false,
-				Optional:     true,
-				Description:  "Device types permitted to connect to server.",
-				ValidateFunc: validation.StringInSlice([]string{"mobile", "desktop"}, false),
-			},
-			"search_domain": {
-				Type:        schema.TypeString,
-				Required:    false,
-				Optional:    true,
-				Description: "DNS search domain for clients. Separate multiple search domains by a comma.",
-				// TODO: Add validation
-			},
-			"replica_count": {
-				Type:         schema.TypeInt,
-				Required:     false,
-				Optional:     true,
-				Computed:     true,
-				Description:  "Replicate server across multiple hosts.",
-				ValidateFunc: validation.IntAtLeast(1),
-			},
-			"multi_device": {
-				Type:        schema.TypeBool,
-				Required:    false,
-				Optional:    true,
-				Description: "Allow users to connect with multiple devices concurrently.",
-			},
-			"debug": {
-				Type:        schema.TypeBool,
-				Required:    false,
-				Optional:    true,
-				Description: "Show server debugging information in output.",
-			},
-			"restrict_routes": {
-				Type:        schema.TypeBool,
-				Required:    false,
-				Optional:    true,
-				Description: "Prevent traffic from networks not specified in the servers routes from being tunneled over the vpn.",
-			},
-			"block_outside_dns": {
-				Type:        schema.TypeBool,
-				Required:    false,
-				Optional:    true,
-				Description: "Block outside DNS on Windows clients.",
-			},
-			"dns_mapping": {
-				Type:        schema.TypeBool,
-				Required:    false,
-				Optional:    true,
-				Description: "Map the vpn clients ip address to the .vpn domain such as example_user.example_org.vpn This will conflict with the DNS port if systemd-resolve is running.",
-			},
-			"inter_client": {
-				Type:        schema.TypeBool,
-				Required:    false,
-				Optional:    true,
-				Description: "Enable inter-client routing across hosts.",
-			},
-			"vxlan": {
-				Type:        schema.TypeBool,
-				Required:    false,
-				Optional:    true,
-				Description: "Use VXLan for routing client-to-client traffic with replicated servers.",
-			},
-			"organization_ids": {
-				Type: schema.TypeList,
-				Elem: &schema.Schema{
-					Type: schema.TypeString,
+			"port_wg": schema.Int64Attribute{
+				MarkdownDescription: "The WireGuard port of the server.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
 				},
-				Required:    false,
-				Optional:    true,
-				Description: "The list of attached organizations to the server.",
-			},
-			"host_ids": {
-				Type: schema.TypeList,
-				Elem: &schema.Schema{
-					Type: schema.TypeString,
+				Validators: []validator.Int64{
+					int64validator.Between(1, 65535),
 				},
-				Required:    false,
-				Optional:    true,
-				Computed:    true,
-				Description: "The list of attached hosts to the server",
 			},
-			"route": {
-				Type: schema.TypeList,
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						"network": {
-							Type:        schema.TypeString,
-							Required:    true,
-							Description: "Network address with subnet to route",
-							ValidateFunc: func(i interface{}, s string) ([]string, []error) {
-								return validation.IsCIDR(i, s)
-							},
-						},
-						"comment": {
-							Type:        schema.TypeString,
-							Required:    false,
-							Optional:    true,
-							Description: "Comment for route",
-						},
-						"nat": {
-							Type:        schema.TypeBool,
-							Required:    false,
-							Optional:    true,
-							Description: "NAT vpn traffic destined to this network",
-							Computed:    true,
-						},
-						"net_gateway": {
-							Type:        schema.TypeBool,
-							Required:    false,
-							Optional:    true,
-							Description: "Net Gateway vpn traffic destined to this network",
-							Computed:    true,
-						},
-					},
+			"network_wg": schema.StringAttribute{
+				MarkdownDescription: "The WireGuard network of the server.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
 				},
-				Required:    false,
-				Optional:    true,
-				Description: "The list of attached routes to the server",
 			},
-			"status": {
-				Type:         schema.TypeString,
-				Required:     false,
-				Optional:     true,
-				Computed:     true,
-				Description:  "The status of the server",
-				RequiredWith: []string{"organization_ids"},
-				ValidateDiagFunc: func(v interface{}, path cty.Path) diag.Diagnostics {
-					allowedStatusesMap := map[string]struct{}{
-						pritunl.ServerStatusOffline: {},
-						pritunl.ServerStatusOnline:  {},
-					}
-
-					allowedStatusesList := make([]string, 0)
-					for status := range allowedStatusesMap {
-						allowedStatusesList = append(allowedStatusesList, status)
-					}
-
-					if _, ok := allowedStatusesMap[strings.ToLower(v.(string))]; !ok {
-						return diag.Diagnostics{
-							{
-								Severity:      diag.Error,
-								Summary:       "Unsupported value for the `status` attribute",
-								Detail:        fmt.Sprintf("Supported values are: %s", strings.Join(allowedStatusesList, ", ")),
-								AttributePath: cty.Path{cty.GetAttrStep{Name: "status"}},
-							},
-						}
-					}
-
-					return nil
+			"network_mode": schema.StringAttribute{
+				MarkdownDescription: "The network mode of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("tunnel"),
+				Validators: []validator.String{
+					stringvalidator.OneOf("tunnel", "bridge"),
 				},
+			},
+			"network_start": schema.StringAttribute{
+				MarkdownDescription: "The network start of the server.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"network_end": schema.StringAttribute{
+				MarkdownDescription: "The network end of the server.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"restrict_routes": schema.BoolAttribute{
+				MarkdownDescription: "Restrict routes.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"ipv6": schema.BoolAttribute{
+				MarkdownDescription: "Enable IPv6.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"ipv6_firewall": schema.BoolAttribute{
+				MarkdownDescription: "Enable IPv6 firewall.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"bind_address": schema.StringAttribute{
+				MarkdownDescription: "The bind address of the server.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"dh_param_bits": schema.Int64Attribute{
+				MarkdownDescription: "The DH param bits of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             int64default.StaticInt64(2048),
+				Validators: []validator.Int64{
+					int64validator.OneOf(1024, 1536, 2048, 3072, 4096),
+				},
+			},
+			"groups": schema.ListAttribute{
+				MarkdownDescription: "Enter list of groups to allow connections from. Names are case sensitive. If empty all groups will able to connect.",
+				Optional:            true,
+				ElementType:         types.StringType,
+				Validators: []validator.List{
+					listvalidator.ValueStringsAre(
+						stringvalidator.LengthAtLeast(1),
+						stringvalidator.RegexMatches(
+							regexp.MustCompile(`^[^\s]+$`),
+							"group names cannot contain spaces",
+						),
+					),
+				},
+			},
+			"multi_device": schema.BoolAttribute{
+				MarkdownDescription: "Allow multiple devices.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"dns_servers": schema.ListAttribute{
+				MarkdownDescription: "Dns servers to push to clients.",
+				Optional:            true,
+				ElementType:         types.StringType,
+				Validators: []validator.List{
+					listvalidator.ValueStringsAre(stringvalidator.LengthAtLeast(1)),
+				},
+			},
+			"search_domain": schema.StringAttribute{
+				MarkdownDescription: "Search domain to push to clients.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"otp_auth": schema.BoolAttribute{
+				MarkdownDescription: "Enable OTP authentication.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"lzo_compression": schema.BoolAttribute{
+				MarkdownDescription: "Enable LZO compression.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"inter_client": schema.BoolAttribute{
+				MarkdownDescription: "Allow inter client communication.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(true),
+			},
+			"ping_interval": schema.Int64Attribute{
+				MarkdownDescription: "The ping interval of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             int64default.StaticInt64(10),
+				Validators: []validator.Int64{
+					int64validator.Between(1, 86400),
+				},
+			},
+			"ping_timeout": schema.Int64Attribute{
+				MarkdownDescription: "The ping timeout of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             int64default.StaticInt64(60),
+				Validators: []validator.Int64{
+					int64validator.Between(1, 86400),
+				},
+			},
+			"link_ping_interval": schema.Int64Attribute{
+				MarkdownDescription: "The link ping interval of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             int64default.StaticInt64(1),
+				Validators: []validator.Int64{
+					int64validator.Between(1, 86400),
+				},
+			},
+			"link_ping_timeout": schema.Int64Attribute{
+				MarkdownDescription: "The link ping timeout of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             int64default.StaticInt64(5),
+				Validators: []validator.Int64{
+					int64validator.Between(1, 86400),
+				},
+			},
+			"inactive_timeout": schema.Int64Attribute{
+				MarkdownDescription: "The inactive timeout of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             int64default.StaticInt64(0),
+				Validators: []validator.Int64{
+					int64validator.Between(0, 86400),
+				},
+			},
+			"session_timeout": schema.Int64Attribute{
+				MarkdownDescription: "The session timeout of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             int64default.StaticInt64(0),
+				Validators: []validator.Int64{
+					int64validator.Between(0, 86400),
+				},
+			},
+			"allowed_devices": schema.StringAttribute{
+				MarkdownDescription: "The allowed devices of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("mobile_desktop"),
+				Validators: []validator.String{
+					stringvalidator.OneOf("mobile", "desktop", "mobile_desktop"),
+				},
+			},
+			"max_clients": schema.Int64Attribute{
+				MarkdownDescription: "The max clients of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             int64default.StaticInt64(2000),
+				Validators: []validator.Int64{
+					int64validator.Between(1, 32768),
+				},
+			},
+			"max_devices": schema.Int64Attribute{
+				MarkdownDescription: "The max devices of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             int64default.StaticInt64(0),
+				Validators: []validator.Int64{
+					int64validator.Between(0, 255),
+				},
+			},
+			"replica_count": schema.Int64Attribute{
+				MarkdownDescription: "The replica count of the server.",
+				Optional:            true,
+				Computed:            true,
+				Default:             int64default.StaticInt64(1),
+				Validators: []validator.Int64{
+					int64validator.Between(1, 10),
+				},
+			},
+			"vxlan": schema.BoolAttribute{
+				MarkdownDescription: "Enable VXLAN.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"dns_mapping": schema.BoolAttribute{
+				MarkdownDescription: "Enable DNS mapping.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"debug": schema.BoolAttribute{
+				MarkdownDescription: "Enable debug.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"route_dns": schema.BoolAttribute{
+				MarkdownDescription: "Route DNS.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(true),
+			},
+			"sso_auth": schema.BoolAttribute{
+				MarkdownDescription: "Enable SSO authentication.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"device_auth": schema.BoolAttribute{
+				MarkdownDescription: "Enable device authentication.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"dynamic_firewall": schema.BoolAttribute{
+				MarkdownDescription: "Enable dynamic firewall.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"organization_ids": schema.ListAttribute{
+				MarkdownDescription: "List of organization IDs attached to the server.",
+				Optional:            true,
+				ElementType:         types.StringType,
 			},
 		},
-		CreateContext: resourceCreateServer,
-		ReadContext:   resourceReadServer,
-		UpdateContext: resourceUpdateServer,
-		DeleteContext: resourceDeleteServer,
-		Importer: &schema.ResourceImporter{
-			StateContext: schema.ImportStatePassthroughContext,
+		Blocks: map[string]schema.Block{
+			"route": schema.ListNestedBlock{
+				MarkdownDescription: "Routes for the server.",
+				NestedObject: schema.NestedBlockObject{
+					Attributes: map[string]schema.Attribute{
+						"network": schema.StringAttribute{
+							MarkdownDescription: "Network address with cidr subnet.",
+							Required:            true,
+						},
+						"comment": schema.StringAttribute{
+							MarkdownDescription: "Comment for the route.",
+							Optional:            true,
+						},
+						"nat": schema.BoolAttribute{
+							MarkdownDescription: "Enable NAT for the route.",
+							Optional:            true,
+							Computed:            true,
+							Default:             booldefault.StaticBool(false),
+						},
+						"nat_interface": schema.StringAttribute{
+							MarkdownDescription: "NAT interface for the route.",
+							Optional:            true,
+						},
+						"nat_netmap": schema.StringAttribute{
+							MarkdownDescription: "NAT netmap for the route.",
+							Optional:            true,
+						},
+						"advertise": schema.BoolAttribute{
+							MarkdownDescription: "Advertise the route.",
+							Optional:            true,
+							Computed:            true,
+							Default:             booldefault.StaticBool(false),
+						},
+						"vpc_region": schema.StringAttribute{
+							MarkdownDescription: "VPC region for the route.",
+							Optional:            true,
+						},
+						"vpc_id": schema.StringAttribute{
+							MarkdownDescription: "VPC ID for the route.",
+							Optional:            true,
+						},
+						"net_gateway": schema.BoolAttribute{
+							MarkdownDescription: "Enable net gateway for the route.",
+							Optional:            true,
+							Computed:            true,
+							Default:             booldefault.StaticBool(false),
+						},
+					},
+				},
+			},
 		},
 	}
 }
 
-// Uses for importing
-func resourceReadServer(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	apiClient := meta.(pritunl.Client)
-
-	server, err := apiClient.GetServer(d.Id())
-	if err != nil {
-		return diag.FromErr(err)
+func (r *ServerResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
 	}
 
-	// get organizations
-	organizations, err := apiClient.GetOrganizationsByServer(d.Id())
-	if err != nil {
-		return diag.FromErr(err)
+	client, ok := req.ProviderData.(pritunl.Client)
+
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected Resource Configure Type",
+			fmt.Sprintf("Expected pritunl.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+		)
+
+		return
 	}
 
-	// get routes
-	routes, err := apiClient.GetRoutesByServer(d.Id())
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	// get hosts
-	hosts, err := apiClient.GetHostsByServer(d.Id())
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	d.Set("name", server.Name)
-	d.Set("protocol", server.Protocol)
-	d.Set("port", server.Port)
-	d.Set("cipher", server.Cipher)
-	d.Set("hash", server.Hash)
-	d.Set("network", server.Network)
-	d.Set("bind_address", server.BindAddress)
-	d.Set("dns_servers", server.DnsServers)
-	d.Set("network_wg", server.NetworkWG)
-	d.Set("port_wg", server.PortWG)
-	d.Set("sso_auth", server.SsoAuth)
-	d.Set("otp_auth", server.OtpAuth)
-	d.Set("device_auth", server.DeviceAuth)
-	d.Set("dynamic_firewall", server.DynamicFirewall)
-	d.Set("ipv6", server.IPv6)
-	d.Set("dh_param_bits", server.DhParamBits)
-	d.Set("ping_interval", server.PingInterval)
-	d.Set("ping_timeout", server.PingTimeout)
-	d.Set("link_ping_interval", server.LinkPingInterval)
-	d.Set("link_ping_timeout", server.LinkPingTimeout)
-	d.Set("session_timeout", server.SessionTimeout)
-	d.Set("inactive_timeout", server.InactiveTimeout)
-	d.Set("max_clients", server.MaxClients)
-	d.Set("network_mode", server.NetworkMode)
-	d.Set("network_start", server.NetworkStart)
-	d.Set("network_end", server.NetworkEnd)
-	d.Set("mss_fix", server.MssFix)
-	d.Set("max_devices", server.MaxDevices)
-	d.Set("pre_connect_msg", server.PreConnectMsg)
-	d.Set("allowed_devices", server.AllowedDevices)
-	d.Set("search_domain", server.SearchDomain)
-	d.Set("replica_count", server.ReplicaCount)
-	d.Set("multi_device", server.MultiDevice)
-	d.Set("debug", server.Debug)
-	d.Set("restrict_routes", server.RestrictRoutes)
-	d.Set("block_outside_dns", server.BlockOutsideDns)
-	d.Set("dns_mapping", server.DnsMapping)
-	d.Set("inter_client", server.InterClient)
-	d.Set("vxlan", server.VxLan)
-	d.Set("status", server.Status)
-
-	if len(organizations) > 0 {
-		organizationsList := make([]string, 0)
-
-		if organizations != nil {
-			for _, organization := range organizations {
-				organizationsList = append(organizationsList, organization.ID)
-			}
-		}
-
-		declaredOrganizations, ok := d.Get("organization_ids").([]interface{})
-		if !ok {
-			return diag.Errorf("failed to parse organization_ids for the server: %s", server.Name)
-		}
-
-		if len(declaredOrganizations) > 0 {
-			organizationsList = matchStringEntitiesWithSchema(organizationsList, declaredOrganizations)
-		}
-
-		d.Set("organization_ids", organizationsList)
-	}
-
-	if len(server.Groups) > 0 {
-		groupsList := make([]string, 0)
-
-		for _, group := range server.Groups {
-			groupsList = append(groupsList, group)
-		}
-
-		declaredGroups, ok := d.Get("groups").([]interface{})
-		if !ok {
-			return diag.Errorf("failed to parse groups for the server: %s", server.Name)
-		}
-
-		if len(declaredGroups) > 0 {
-			groupsList = matchStringEntitiesWithSchema(groupsList, declaredGroups)
-		}
-
-		d.Set("groups", groupsList)
-	}
-
-	if len(routes) > 0 {
-		declaredRoutes, ok := d.Get("route").([]interface{})
-		if !ok {
-			return diag.Errorf("failed to parse routes for the server: %s", server.Name)
-		}
-
-		if len(declaredRoutes) > 0 {
-			routes = matchRoutesWithSchema(routes, declaredRoutes)
-		}
-
-		d.Set("route", flattenRoutesData(routes))
-	}
-
-	if len(hosts) > 0 {
-		hostsList := make([]string, 0)
-
-		if hosts != nil {
-			for _, host := range hosts {
-				hostsList = append(hostsList, host.ID)
-			}
-		}
-
-		declaredHosts, ok := d.Get("host_ids").([]interface{})
-		if !ok {
-			return diag.Errorf("failed to parse host_ids for the server: %s", server.Name)
-		}
-
-		if len(declaredHosts) > 0 {
-			hostsList = matchStringEntitiesWithSchema(hostsList, declaredHosts)
-		}
-
-		d.Set("host_ids", hostsList)
-	}
-
-	return nil
+	r.client = client
 }
 
-func resourceCreateServer(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	apiClient := meta.(pritunl.Client)
+func (r *ServerResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var data ServerResourceModel
 
-	serverData := map[string]interface{}{
-		"name":               d.Get("name"),
-		"protocol":           d.Get("protocol"),
-		"port":               d.Get("port"),
-		"network":            d.Get("network"),
-		"cipher":             d.Get("cipher"),
-		"hash":               d.Get("hash"),
-		"bind_address":       d.Get("bind_address"),
-		"groups":             d.Get("groups"),
-		"dns_servers":        d.Get("dns_servers"),
-		"network_wg":         d.Get("network_wg"),
-		"port_wg":            d.Get("port_wg"),
-		"sso_auth":           d.Get("sso_auth"),
-		"otp_auth":           d.Get("otp_auth"),
-		"device_auth":        d.Get("device_auth"),
-		"dynamic_firewall":   d.Get("dynamic_firewall"),
-		"ipv6":               d.Get("ipv6"),
-		"dh_param_bits":      d.Get("dh_param_bits"),
-		"ping_interval":      d.Get("ping_interval"),
-		"ping_timeout":       d.Get("ping_timeout"),
-		"link_ping_interval": d.Get("link_ping_interval"),
-		"link_ping_timeout":  d.Get("link_ping_timeout"),
-		"session_timeout":    d.Get("session_timeout"),
-		"inactive_timeout":   d.Get("inactive_timeout"),
-		"max_clients":        d.Get("max_clients"),
-		"network_mode":       d.Get("network_mode"),
-		"network_start":      d.Get("network_start"),
-		"network_end":        d.Get("network_end"),
-		"mss_fix":            d.Get("mss_fix"),
-		"max_devices":        d.Get("max_devices"),
-		"pre_connect_msg":    d.Get("pre_connect_msg"),
-		"allowed_devices":    d.Get("allowed_devices"),
-		"search_domain":      d.Get("search_domain"),
-		"replica_count":      d.Get("replica_count"),
-		"multi_device":       d.Get("multi_device"),
-		"debug":              d.Get("debug"),
-		"restrict_routes":    d.Get("restrict_routes"),
-		"block_outside_dns":  d.Get("block_outside_dns"),
-		"dns_mapping":        d.Get("dns_mapping"),
-		"inter_client":       d.Get("inter_client"),
-		"vxlan":              d.Get("vxlan"),
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
-	server, err := apiClient.CreateServer(serverData)
-	if err != nil {
-		return diag.FromErr(err)
+	server := pritunl.Server{
+		Name:             data.Name.ValueString(),
+		Protocol:         data.Protocol.ValueString(),
+		Cipher:           data.Cipher.ValueString(),
+		Hash:             data.Hash.ValueString(),
+		Network:          data.Network.ValueString(),
+		WG:               data.WG.ValueBool(),
+		NetworkWG:        data.NetworkWG.ValueString(),
+		NetworkMode:      data.NetworkMode.ValueString(),
+		NetworkStart:     data.NetworkStart.ValueString(),
+		NetworkEnd:       data.NetworkEnd.ValueString(),
+		RestrictRoutes:   data.RestrictRoutes.ValueBool(),
+		IPv6:             data.IPv6.ValueBool(),
+		IPv6Firewall:     data.IPv6Firewall.ValueBool(),
+		BindAddress:      data.BindAddress.ValueString(),
+		MultiDevice:      data.MultiDevice.ValueBool(),
+		SearchDomain:     data.SearchDomain.ValueString(),
+		OtpAuth:          data.OTPAuth.ValueBool(),
+		LzoCompression:   data.LZOCompression.ValueBool(),
+		InterClient:      data.InterClient.ValueBool(),
+		AllowedDevices:   data.AllowedDevices.ValueString(),
+		VxLan:            data.VXLAN.ValueBool(),
+		DnsMapping:       data.DNSMapping.ValueBool(),
+		Debug:            data.Debug.ValueBool(),
+		SsoAuth:          data.SSOAuth.ValueBool(),
+		DeviceAuth:       data.DeviceAuth.ValueBool(),
+		DynamicFirewall:  data.DynamicFirewall.ValueBool(),
 	}
 
-	d.SetId(server.ID)
-
-	if d.HasChange("organization_ids") {
-		_, newOrgs := d.GetChange("organization_ids")
-		for _, v := range newOrgs.([]interface{}) {
-			err = apiClient.AttachOrganizationToServer(v.(string), d.Id())
-			if err != nil {
-				return diag.Errorf("Error on attaching server to the organization: %s", err)
-			}
-		}
+	if !data.Port.IsNull() {
+		server.Port = int(data.Port.ValueInt64())
+	}
+	if !data.PortWG.IsNull() {
+		server.PortWG = int(data.PortWG.ValueInt64())
+	}
+	if !data.DHParamBits.IsNull() {
+		server.DhParamBits = int(data.DHParamBits.ValueInt64())
+	}
+	if !data.PingInterval.IsNull() {
+		server.PingInterval = int(data.PingInterval.ValueInt64())
+	}
+	if !data.PingTimeout.IsNull() {
+		server.PingTimeout = int(data.PingTimeout.ValueInt64())
+	}
+	if !data.LinkPingInterval.IsNull() {
+		server.LinkPingInterval = int(data.LinkPingInterval.ValueInt64())
+	}
+	if !data.LinkPingTimeout.IsNull() {
+		server.LinkPingTimeout = int(data.LinkPingTimeout.ValueInt64())
+	}
+	if !data.InactiveTimeout.IsNull() {
+		server.InactiveTimeout = int(data.InactiveTimeout.ValueInt64())
+	}
+	if !data.SessionTimeout.IsNull() {
+		server.SessionTimeout = int(data.SessionTimeout.ValueInt64())
+	}
+	if !data.MaxClients.IsNull() {
+		server.MaxClients = int(data.MaxClients.ValueInt64())
+	}
+	if !data.MaxDevices.IsNull() {
+		server.MaxDevices = int(data.MaxDevices.ValueInt64())
+	}
+	if !data.ReplicaCount.IsNull() {
+		server.ReplicaCount = int(data.ReplicaCount.ValueInt64())
 	}
 
-	// Delete default route
-	defaultRoute := pritunl.Route{
-		Network: "0.0.0.0/0",
-		Nat:     true,
-	}
-	err = apiClient.DeleteRouteFromServer(d.Id(), defaultRoute)
-	if err != nil {
-		return diag.Errorf("Error on attaching server to the organization: %s", err)
-	}
-
-	if d.HasChange("route") {
-		_, newRoutes := d.GetChange("route")
-		routes := make([]pritunl.Route, 0)
-
-		for _, v := range newRoutes.([]interface{}) {
-			routes = append(routes, pritunl.ConvertMapToRoute(v.(map[string]interface{})))
-		}
-
-		err = apiClient.AddRoutesToServer(d.Id(), routes)
-		if err != nil {
-			return diag.Errorf("Error on attaching route from the server: %s", err)
-		}
-	}
-
-	if d.HasChange("host_ids") {
-		// delete default host(s) only when host_ids aren't empty
-
-		hosts, err := apiClient.GetHostsByServer(d.Id())
-		if err != nil {
-			return diag.FromErr(err)
-		}
-		for _, host := range hosts {
-			err = apiClient.DetachHostFromServer(host.ID, d.Id())
-			if err != nil {
-				return diag.Errorf("Error on detaching a host from the server: %s", err)
-			}
-		}
-
-		_, newHosts := d.GetChange("host_ids")
-		for _, v := range newHosts.([]interface{}) {
-			err = apiClient.AttachHostToServer(v.(string), d.Id())
-			if err != nil {
-				return diag.Errorf("Error on attaching a host to the server: %s", err)
-			}
-		}
-	}
-
-	if d.Get("status").(string) == pritunl.ServerStatusOnline {
-		err = apiClient.StartServer(d.Id())
-		if err != nil {
-			return diag.Errorf("Error on starting server: %s", err)
-		}
-	}
-
-	return resourceReadServer(ctx, d, meta)
-}
-
-func resourceUpdateServer(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	apiClient := meta.(pritunl.Client)
-
-	server, err := apiClient.GetServer(d.Id())
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	prevServerStatus := server.Status
-
-	if v, ok := d.GetOk("name"); ok {
-		server.Name = v.(string)
-	}
-
-	if v, ok := d.GetOk("protocol"); ok {
-		server.Protocol = v.(string)
-	}
-
-	if v, ok := d.GetOk("cipher"); ok {
-		server.Cipher = v.(string)
-	}
-
-	if v, ok := d.GetOk("hash"); ok {
-		server.Hash = v.(string)
-	}
-
-	if v, ok := d.GetOk("port"); ok {
-		server.Port = v.(int)
-	}
-
-	if v, ok := d.GetOk("network"); ok {
-		server.Network = v.(string)
-	}
-
-	if d.HasChange("bind_address") {
-		server.BindAddress = d.Get("bind_address").(string)
-	}
-
-	if d.HasChange("network_wg") {
-		server.NetworkWG = d.Get("network_wg").(string)
-	}
-
-	if d.HasChange("port_wg") {
-		server.PortWG = d.Get("port_wg").(int)
-	}
-
-	isWgEnabled := server.NetworkWG != "" && server.PortWG > 0
-	server.WG = isWgEnabled
-
-	if d.HasChange("sso_auth") {
-		server.SsoAuth = d.Get("sso_auth").(bool)
-	}
-
-	if d.HasChange("otp_auth") {
-		server.OtpAuth = d.Get("otp_auth").(bool)
-	}
-
-	if d.HasChange("device_auth") {
-		server.DeviceAuth = d.Get("device_auth").(bool)
-	}
-
-	if d.HasChange("dynamic_firewall") {
-		server.DynamicFirewall = d.Get("dynamic_firewall").(bool)
-	}
-
-	if d.HasChange("ipv6") {
-		server.IPv6 = d.Get("ipv6").(bool)
-	}
-
-	if d.HasChange("dh_param_bits") {
-		server.DhParamBits = d.Get("dh_param_bits").(int)
-	}
-
-	if d.HasChange("ping_interval") {
-		server.PingInterval = d.Get("ping_interval").(int)
-	}
-
-	if d.HasChange("ping_timeout") {
-		server.PingTimeout = d.Get("ping_timeout").(int)
-	}
-
-	if d.HasChange("link_ping_interval") {
-		server.LinkPingInterval = d.Get("link_ping_interval").(int)
-	}
-
-	if d.HasChange("link_ping_timeout") {
-		server.LinkPingTimeout = d.Get("link_ping_timeout").(int)
-	}
-
-	if d.HasChange("session_timeout") {
-		server.SessionTimeout = d.Get("session_timeout").(int)
-	}
-
-	if d.HasChange("inactive_timeout") {
-		server.InactiveTimeout = d.Get("inactive_timeout").(int)
-	}
-
-	if d.HasChange("max_clients") {
-		server.MaxClients = d.Get("max_clients").(int)
-	}
-
-	if d.HasChange("network_mode") {
-		server.NetworkMode = d.Get("network_mode").(string)
-	}
-
-	if d.HasChange("network_start") {
-		server.NetworkStart = d.Get("network_start").(string)
-	}
-
-	if d.HasChange("network_end") {
-		server.NetworkEnd = d.Get("network_end").(string)
-	}
-
-	if server.NetworkMode == pritunl.ServerNetworkModeBridge && (server.NetworkStart == "" || server.NetworkEnd == "") {
-		return diag.Errorf("the attribute network_mode = %s requires network_start and network_end attributes", pritunl.ServerNetworkModeBridge)
-	}
-
-	if d.HasChange("mss_fix") {
-		server.MssFix = d.Get("mss_fix").(int)
-	}
-
-	if d.HasChange("max_devices") {
-		server.MaxDevices = d.Get("max_devices").(int)
-	}
-
-	if d.HasChange("pre_connect_msg") {
-		server.PreConnectMsg = d.Get("pre_connect_msg").(string)
-	}
-
-	if d.HasChange("allowed_devices") {
-		server.AllowedDevices = d.Get("allowed_devices").(string)
-	}
-
-	if d.HasChange("search_domain") {
-		server.SearchDomain = d.Get("search_domain").(string)
-	}
-
-	if d.HasChange("replica_count") {
-		server.ReplicaCount = d.Get("replica_count").(int)
-	}
-
-	if d.HasChange("multi_device") {
-		server.MultiDevice = d.Get("multi_device").(bool)
-	}
-
-	if d.HasChange("debug") {
-		server.Debug = d.Get("debug").(bool)
-	}
-
-	if d.HasChange("restrict_routes") {
-		server.RestrictRoutes = d.Get("restrict_routes").(bool)
-	}
-
-	if d.HasChange("block_outside_dns") {
-		server.BlockOutsideDns = d.Get("block_outside_dns").(bool)
-	}
-
-	if d.HasChange("dns_mapping") {
-		server.DnsMapping = d.Get("dns_mapping").(bool)
-	}
-
-	if d.HasChange("vxlan") {
-		server.VxLan = d.Get("vxlan").(bool)
-	}
-
-	if d.HasChange("groups") {
-		groups := make([]string, 0)
-		for _, v := range d.Get("groups").([]interface{}) {
-			groups = append(groups, v.(string))
+	if !data.Groups.IsNull() && !data.Groups.IsUnknown() {
+		var groups []string
+		resp.Diagnostics.Append(data.Groups.ElementsAs(ctx, &groups, false)...)
+		if resp.Diagnostics.HasError() {
+			return
 		}
 		server.Groups = groups
 	}
 
-	if d.HasChange("dns_servers") {
-		dnsServers := make([]string, 0)
-		for _, v := range d.Get("dns_servers").([]interface{}) {
-			dnsServers = append(dnsServers, v.(string))
+	if !data.DNSServers.IsNull() && !data.DNSServers.IsUnknown() {
+		var dnsServers []string
+		resp.Diagnostics.Append(data.DNSServers.ElementsAs(ctx, &dnsServers, false)...)
+		if resp.Diagnostics.HasError() {
+			return
 		}
 		server.DnsServers = dnsServers
 	}
 
-	// Stop server before applying any change
-	err = apiClient.StopServer(d.Id())
+	serverMap := map[string]interface{}{
+		"name":              server.Name,
+		"protocol":          server.Protocol,
+		"cipher":            server.Cipher,
+		"hash":              server.Hash,
+		"port":              server.Port,
+		"network":           server.Network,
+		"wg":                server.WG,
+		"port_wg":           server.PortWG,
+		"network_wg":        server.NetworkWG,
+		"network_mode":      server.NetworkMode,
+		"network_start":     server.NetworkStart,
+		"network_end":       server.NetworkEnd,
+		"restrict_routes":   server.RestrictRoutes,
+		"ipv6":              server.IPv6,
+		"ipv6_firewall":     server.IPv6Firewall,
+		"bind_address":      server.BindAddress,
+		"dh_param_bits":     server.DhParamBits,
+		"multi_device":      server.MultiDevice,
+		"search_domain":     server.SearchDomain,
+		"otp_auth":          server.OtpAuth,
+		"lzo_compression":   server.LzoCompression,
+		"inter_client":      server.InterClient,
+		"allowed_devices":   server.AllowedDevices,
+		"vxlan":             server.VxLan,
+		"dns_mapping":       server.DnsMapping,
+		"debug":             server.Debug,
+		"sso_auth":          server.SsoAuth,
+		"device_auth":       server.DeviceAuth,
+		"dynamic_firewall":  server.DynamicFirewall,
+		"groups":            server.Groups,
+		"dns_servers":       server.DnsServers,
+	}
+
+	serverResponse, err := r.client.CreateServer(serverMap)
 	if err != nil {
-		return diag.Errorf("Error on stopping server: %s", err)
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create server, got error: %s", err))
+		return
 	}
 
-	if d.HasChange("organization_ids") {
-		oldOrgs, newOrgs := d.GetChange("organization_ids")
+	data.ID = types.StringValue(serverResponse.ID)
+	data.Name = types.StringValue(serverResponse.Name)
+	data.Protocol = types.StringValue(serverResponse.Protocol)
+	data.Cipher = types.StringValue(serverResponse.Cipher)
+	data.Hash = types.StringValue(serverResponse.Hash)
+	data.Port = types.Int64Value(int64(serverResponse.Port))
+	data.Network = types.StringValue(serverResponse.Network)
+	data.WG = types.BoolValue(serverResponse.WG)
+	data.PortWG = types.Int64Value(int64(serverResponse.PortWG))
+	data.NetworkWG = types.StringValue(serverResponse.NetworkWG)
+	data.NetworkMode = types.StringValue(serverResponse.NetworkMode)
+	data.NetworkStart = types.StringValue(serverResponse.NetworkStart)
+	data.NetworkEnd = types.StringValue(serverResponse.NetworkEnd)
+	data.RestrictRoutes = types.BoolValue(serverResponse.RestrictRoutes)
+	data.IPv6 = types.BoolValue(serverResponse.IPv6)
+	data.IPv6Firewall = types.BoolValue(serverResponse.IPv6Firewall)
+	data.BindAddress = types.StringValue(serverResponse.BindAddress)
+	data.DHParamBits = types.Int64Value(int64(serverResponse.DhParamBits))
+	data.MultiDevice = types.BoolValue(serverResponse.MultiDevice)
+	data.SearchDomain = types.StringValue(serverResponse.SearchDomain)
+	data.OTPAuth = types.BoolValue(serverResponse.OtpAuth)
+	data.LZOCompression = types.BoolValue(serverResponse.LzoCompression)
+	data.InterClient = types.BoolValue(serverResponse.InterClient)
+	data.PingInterval = types.Int64Value(int64(serverResponse.PingInterval))
+	data.PingTimeout = types.Int64Value(int64(serverResponse.PingTimeout))
+	data.LinkPingInterval = types.Int64Value(int64(serverResponse.LinkPingInterval))
+	data.LinkPingTimeout = types.Int64Value(int64(serverResponse.LinkPingTimeout))
+	data.InactiveTimeout = types.Int64Value(int64(serverResponse.InactiveTimeout))
+	data.SessionTimeout = types.Int64Value(int64(serverResponse.SessionTimeout))
+	data.AllowedDevices = types.StringValue(serverResponse.AllowedDevices)
+	data.MaxClients = types.Int64Value(int64(serverResponse.MaxClients))
+	data.MaxDevices = types.Int64Value(int64(serverResponse.MaxDevices))
+	data.ReplicaCount = types.Int64Value(int64(serverResponse.ReplicaCount))
+	data.VXLAN = types.BoolValue(serverResponse.VxLan)
+	data.DNSMapping = types.BoolValue(serverResponse.DnsMapping)
+	data.Debug = types.BoolValue(serverResponse.Debug)
+	data.SSOAuth = types.BoolValue(serverResponse.SsoAuth)
+	data.DeviceAuth = types.BoolValue(serverResponse.DeviceAuth)
+	data.DynamicFirewall = types.BoolValue(serverResponse.DynamicFirewall)
 
-		oldOrgsOnly := diffStringLists(oldOrgs.([]interface{}), newOrgs.([]interface{}))
-		for _, v := range oldOrgsOnly {
-			err = apiClient.DetachOrganizationFromServer(v, d.Id())
+	if len(serverResponse.Groups) > 0 {
+		groupsAttr := make([]attr.Value, len(serverResponse.Groups))
+		for i, group := range serverResponse.Groups {
+			groupsAttr[i] = types.StringValue(group)
+		}
+		data.Groups, _ = types.ListValue(types.StringType, groupsAttr)
+	} else {
+		data.Groups = types.ListNull(types.StringType)
+	}
+
+	if len(serverResponse.DnsServers) > 0 {
+		dnsServersAttr := make([]attr.Value, len(serverResponse.DnsServers))
+		for i, dnsServer := range serverResponse.DnsServers {
+			dnsServersAttr[i] = types.StringValue(dnsServer)
+		}
+		data.DNSServers, _ = types.ListValue(types.StringType, dnsServersAttr)
+	} else {
+		data.DNSServers = types.ListNull(types.StringType)
+	}
+
+	if !data.OrganizationIDs.IsNull() && !data.OrganizationIDs.IsUnknown() {
+		var orgIDs []string
+		resp.Diagnostics.Append(data.OrganizationIDs.ElementsAs(ctx, &orgIDs, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		
+		for _, orgID := range orgIDs {
+			err := r.client.AttachOrganizationToServer(orgID, serverResponse.ID)
 			if err != nil {
-				return diag.Errorf("Error on detaching server to the organization: %s", err)
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to attach organization %s to server, got error: %s", orgID, err))
+				return
 			}
 		}
+	}
 
-		newOrgsOnly := diffStringLists(newOrgs.([]interface{}), oldOrgs.([]interface{}))
-		for _, v := range newOrgsOnly {
-			err = apiClient.AttachOrganizationToServer(v, d.Id())
+	if !data.Route.IsNull() && !data.Route.IsUnknown() && len(data.Route.Elements()) > 0 {
+		routeElements := data.Route.Elements()
+		for _, routeElement := range routeElements {
+			routeObj := routeElement.(types.Object)
+			routeAttrs := routeObj.Attributes()
+			
+			route := pritunl.Route{
+				Network: routeAttrs["network"].(types.String).ValueString(),
+				Comment: routeAttrs["comment"].(types.String).ValueString(),
+				Nat: routeAttrs["nat"].(types.Bool).ValueBool(),
+				NatInterface: routeAttrs["nat_interface"].(types.String).ValueString(),
+				NatNetmap: routeAttrs["nat_netmap"].(types.String).ValueString(),
+				Advertise: routeAttrs["advertise"].(types.Bool).ValueBool(),
+				VpcRegion: routeAttrs["vpc_region"].(types.String).ValueString(),
+				VpcID: routeAttrs["vpc_id"].(types.String).ValueString(),
+				NetGateway: routeAttrs["net_gateway"].(types.Bool).ValueBool(),
+			}
+			
+			err := r.client.AddRouteToServer(serverResponse.ID, route)
 			if err != nil {
-				return diag.Errorf("Error on attaching server to the organization: %s", err)
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to add route to server, got error: %s", err))
+				return
 			}
 		}
 	}
 
-	if d.HasChange("route") {
-		oldRoutes, newRoutes := d.GetChange("route")
-
-		newRoutesMap := make(map[string]pritunl.Route, 0)
-		for _, v := range newRoutes.([]interface{}) {
-			route := pritunl.ConvertMapToRoute(v.(map[string]interface{}))
-			newRoutesMap[route.GetID()] = route
-		}
-		oldRoutesMap := make(map[string]pritunl.Route, 0)
-		for _, v := range oldRoutes.([]interface{}) {
-			route := pritunl.ConvertMapToRoute(v.(map[string]interface{}))
-			oldRoutesMap[route.GetID()] = route
-		}
-
-		for _, route := range newRoutesMap {
-			if _, found := oldRoutesMap[route.GetID()]; found {
-				// update or skip
-				err = apiClient.UpdateRouteOnServer(d.Id(), route)
-				if err != nil {
-					return diag.Errorf("Error on updating route on the server: %s", err)
-				}
-			} else {
-				// add route
-				err = apiClient.AddRouteToServer(d.Id(), route)
-				if err != nil {
-					return diag.Errorf("Error on attaching route from the server: %s", err)
-				}
-			}
-		}
-
-		for _, route := range oldRoutesMap {
-			if _, found := newRoutesMap[route.GetID()]; !found {
-				// delete route
-				err = apiClient.DeleteRouteFromServer(d.Id(), route)
-				if err != nil {
-					return diag.Errorf("Error on detaching route from the server: %s", err)
-				}
-			}
-		}
+	if !data.OrganizationIDs.IsNull() && !data.OrganizationIDs.IsUnknown() {
+	} else {
+		data.OrganizationIDs = types.ListNull(types.StringType)
 	}
 
-	if d.HasChange("host_ids") {
-		oldHosts, newHosts := d.GetChange("host_ids")
-		for _, v := range oldHosts.([]interface{}) {
-			err = apiClient.DetachHostFromServer(v.(string), d.Id())
-			if err != nil {
-				return diag.Errorf("Error on detaching server to the organization: %s", err)
-			}
-		}
-		for _, v := range newHosts.([]interface{}) {
-			err = apiClient.AttachHostToServer(v.(string), d.Id())
-			if err != nil {
-				return diag.Errorf("Error on attaching server to the organization: %s", err)
-			}
-		}
-	}
 
-	// Start server if it was ONLINE before and status wasn't changed OR status was changed to ONLINE
-	shouldServerBeStarted := (prevServerStatus == pritunl.ServerStatusOnline && !d.HasChange("status")) || (d.HasChange("status") && d.Get("status").(string) != pritunl.ServerStatusOffline)
-
-	err = apiClient.UpdateServer(d.Id(), server)
-	if err != nil {
-		// start server in case of error?
-		return diag.FromErr(err)
-	}
-
-	if shouldServerBeStarted {
-		err = apiClient.StartServer(d.Id())
-		if err != nil {
-			return diag.Errorf("Error on starting server: %s", err)
-		}
-	}
-
-	return resourceReadServer(ctx, d, meta)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-func resourceDeleteServer(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	apiClient := meta.(pritunl.Client)
+func (r *ServerResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var data ServerResourceModel
 
-	err := apiClient.DeleteServer(d.Id())
-	if err != nil {
-		return diag.FromErr(err)
+	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
+
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
-	d.SetId("")
+	server, err := r.client.GetServer(data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read server, got error: %s", err))
+		return
+	}
 
-	return nil
+	data.Name = types.StringValue(server.Name)
+	data.Protocol = types.StringValue(server.Protocol)
+	data.Cipher = types.StringValue(server.Cipher)
+	data.Hash = types.StringValue(server.Hash)
+	data.Port = types.Int64Value(int64(server.Port))
+	data.Network = types.StringValue(server.Network)
+	data.WG = types.BoolValue(server.WG)
+	data.PortWG = types.Int64Value(int64(server.PortWG))
+	data.NetworkWG = types.StringValue(server.NetworkWG)
+	data.NetworkMode = types.StringValue(server.NetworkMode)
+	data.NetworkStart = types.StringValue(server.NetworkStart)
+	data.NetworkEnd = types.StringValue(server.NetworkEnd)
+	data.RestrictRoutes = types.BoolValue(server.RestrictRoutes)
+	data.IPv6 = types.BoolValue(server.IPv6)
+	data.IPv6Firewall = types.BoolValue(server.IPv6Firewall)
+	data.BindAddress = types.StringValue(server.BindAddress)
+	data.DHParamBits = types.Int64Value(int64(server.DhParamBits))
+	data.MultiDevice = types.BoolValue(server.MultiDevice)
+	data.SearchDomain = types.StringValue(server.SearchDomain)
+	data.OTPAuth = types.BoolValue(server.OtpAuth)
+	data.LZOCompression = types.BoolValue(server.LzoCompression)
+	data.InterClient = types.BoolValue(server.InterClient)
+	data.PingInterval = types.Int64Value(int64(server.PingInterval))
+	data.PingTimeout = types.Int64Value(int64(server.PingTimeout))
+	data.LinkPingInterval = types.Int64Value(int64(server.LinkPingInterval))
+	data.LinkPingTimeout = types.Int64Value(int64(server.LinkPingTimeout))
+	data.InactiveTimeout = types.Int64Value(int64(server.InactiveTimeout))
+	data.SessionTimeout = types.Int64Value(int64(server.SessionTimeout))
+	data.AllowedDevices = types.StringValue(server.AllowedDevices)
+	data.MaxClients = types.Int64Value(int64(server.MaxClients))
+	data.MaxDevices = types.Int64Value(int64(server.MaxDevices))
+	data.ReplicaCount = types.Int64Value(int64(server.ReplicaCount))
+	data.VXLAN = types.BoolValue(server.VxLan)
+	data.DNSMapping = types.BoolValue(server.DnsMapping)
+	data.Debug = types.BoolValue(server.Debug)
+	data.SSOAuth = types.BoolValue(server.SsoAuth)
+	data.DeviceAuth = types.BoolValue(server.DeviceAuth)
+	data.DynamicFirewall = types.BoolValue(server.DynamicFirewall)
+	
+	if data.RouteDNS.IsNull() || data.RouteDNS.IsUnknown() {
+		data.RouteDNS = types.BoolValue(true)
+	}
+
+	if len(server.Groups) > 0 {
+		groupsAttr := make([]attr.Value, len(server.Groups))
+		for i, group := range server.Groups {
+			groupsAttr[i] = types.StringValue(group)
+		}
+		data.Groups, _ = types.ListValue(types.StringType, groupsAttr)
+	} else {
+		data.Groups = types.ListNull(types.StringType)
+	}
+
+	if len(server.DnsServers) > 0 {
+		dnsServersAttr := make([]attr.Value, len(server.DnsServers))
+		for i, dnsServer := range server.DnsServers {
+			dnsServersAttr[i] = types.StringValue(dnsServer)
+		}
+		data.DNSServers, _ = types.ListValue(types.StringType, dnsServersAttr)
+	} else {
+		data.DNSServers = types.ListNull(types.StringType)
+	}
+
+	attachedOrgs, err := r.client.GetOrganizationsByServer(data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to get organizations for server, got error: %s", err))
+		return
+	}
+	
+	if !data.OrganizationIDs.IsNull() && !data.OrganizationIDs.IsUnknown() {
+		var currentOrgIDs []string
+		resp.Diagnostics.Append(data.OrganizationIDs.ElementsAs(ctx, &currentOrgIDs, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		
+		attachedOrgMap := make(map[string]bool)
+		for _, org := range attachedOrgs {
+			attachedOrgMap[org.ID] = true
+		}
+		
+		validOrgIDs := make([]string, 0)
+		for _, orgID := range currentOrgIDs {
+			if attachedOrgMap[orgID] {
+				validOrgIDs = append(validOrgIDs, orgID)
+			}
+		}
+		
+		if len(validOrgIDs) > 0 {
+			orgIDsAttr := make([]attr.Value, len(validOrgIDs))
+			for i, orgID := range validOrgIDs {
+				orgIDsAttr[i] = types.StringValue(orgID)
+			}
+			data.OrganizationIDs, _ = types.ListValue(types.StringType, orgIDsAttr)
+		} else {
+			data.OrganizationIDs = types.ListNull(types.StringType)
+		}
+	} else {
+		if len(attachedOrgs) > 0 {
+			orgIDsAttr := make([]attr.Value, len(attachedOrgs))
+			for i, org := range attachedOrgs {
+				orgIDsAttr[i] = types.StringValue(org.ID)
+			}
+			data.OrganizationIDs, _ = types.ListValue(types.StringType, orgIDsAttr)
+		} else {
+			data.OrganizationIDs = types.ListNull(types.StringType)
+		}
+	}
+
+	attachedRoutes, err := r.client.GetRoutesByServer(data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to get routes for server, got error: %s", err))
+		return
+	}
+	
+	if !data.Route.IsNull() && !data.Route.IsUnknown() {
+		var currentRoutes []types.Object
+		resp.Diagnostics.Append(data.Route.ElementsAs(ctx, &currentRoutes, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		
+		attachedRouteMap := make(map[string]pritunl.Route)
+		for _, route := range attachedRoutes {
+			attachedRouteMap[route.Network] = route
+		}
+		
+		validRoutes := make([]attr.Value, 0)
+		for _, routeObj := range currentRoutes {
+			routeAttrs := routeObj.Attributes()
+			network := routeAttrs["network"].(types.String).ValueString()
+			
+			if _, exists := attachedRouteMap[network]; exists {
+				validRoutes = append(validRoutes, routeObj)
+			}
+		}
+		
+		if len(validRoutes) > 0 {
+			data.Route, _ = types.ListValue(types.ObjectType{
+				AttrTypes: map[string]attr.Type{
+					"network":       types.StringType,
+					"comment":       types.StringType,
+					"nat":           types.BoolType,
+					"nat_interface": types.StringType,
+					"nat_netmap":    types.StringType,
+					"advertise":     types.BoolType,
+					"vpc_region":    types.StringType,
+					"vpc_id":        types.StringType,
+					"net_gateway":   types.BoolType,
+				},
+			}, validRoutes)
+		} else {
+			data.Route = types.ListNull(types.ObjectType{
+				AttrTypes: map[string]attr.Type{
+					"network":       types.StringType,
+					"comment":       types.StringType,
+					"nat":           types.BoolType,
+					"nat_interface": types.StringType,
+					"nat_netmap":    types.StringType,
+					"advertise":     types.BoolType,
+					"vpc_region":    types.StringType,
+					"vpc_id":        types.StringType,
+					"net_gateway":   types.BoolType,
+				},
+			})
+		}
+	} else {
+		configuredRoutes := make([]pritunl.Route, 0)
+		for _, route := range attachedRoutes {
+			if route.Comment != "" {
+				configuredRoutes = append(configuredRoutes, route)
+			}
+		}
+		
+		if len(configuredRoutes) > 0 {
+			routeAttrs := make([]attr.Value, len(configuredRoutes))
+			for i, route := range configuredRoutes {
+				natInterface := types.StringNull()
+				if route.NatInterface != "" {
+					natInterface = types.StringValue(route.NatInterface)
+				}
+				natNetmap := types.StringNull()
+				if route.NatNetmap != "" {
+					natNetmap = types.StringValue(route.NatNetmap)
+				}
+				vpcRegion := types.StringNull()
+				if route.VpcRegion != "" {
+					vpcRegion = types.StringValue(route.VpcRegion)
+				}
+				vpcId := types.StringNull()
+				if route.VpcID != "" {
+					vpcId = types.StringValue(route.VpcID)
+				}
+				
+				routeObjValue, _ := types.ObjectValue(map[string]attr.Type{
+					"network":       types.StringType,
+					"comment":       types.StringType,
+					"nat":           types.BoolType,
+					"nat_interface": types.StringType,
+					"nat_netmap":    types.StringType,
+					"advertise":     types.BoolType,
+					"vpc_region":    types.StringType,
+					"vpc_id":        types.StringType,
+					"net_gateway":   types.BoolType,
+				}, map[string]attr.Value{
+					"network":       types.StringValue(route.Network),
+					"comment":       types.StringValue(route.Comment),
+					"nat":           types.BoolValue(route.Nat),
+					"nat_interface": natInterface,
+					"nat_netmap":    natNetmap,
+					"advertise":     types.BoolValue(route.Advertise),
+					"vpc_region":    vpcRegion,
+					"vpc_id":        vpcId,
+					"net_gateway":   types.BoolValue(route.NetGateway),
+				})
+				routeAttrs[i] = routeObjValue
+			}
+			data.Route, _ = types.ListValue(types.ObjectType{
+				AttrTypes: map[string]attr.Type{
+					"network":       types.StringType,
+					"comment":       types.StringType,
+					"nat":           types.BoolType,
+					"nat_interface": types.StringType,
+					"nat_netmap":    types.StringType,
+					"advertise":     types.BoolType,
+					"vpc_region":    types.StringType,
+					"vpc_id":        types.StringType,
+					"net_gateway":   types.BoolType,
+				},
+			}, routeAttrs)
+		} else {
+			data.Route = types.ListNull(types.ObjectType{
+				AttrTypes: map[string]attr.Type{
+					"network":       types.StringType,
+					"comment":       types.StringType,
+					"nat":           types.BoolType,
+					"nat_interface": types.StringType,
+					"nat_netmap":    types.StringType,
+					"advertise":     types.BoolType,
+					"vpc_region":    types.StringType,
+					"vpc_id":        types.StringType,
+					"net_gateway":   types.BoolType,
+				},
+			})
+		}
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-func diffStringLists(mainList []interface{}, otherList []interface{}) []string {
-	result := make([]string, 0)
-	var found bool
+func (r *ServerResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var data ServerResourceModel
 
-	for _, i := range mainList {
-		found = false
-		for _, j := range otherList {
-			if i.(string) == j.(string) {
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	server := pritunl.Server{
+		Name:             data.Name.ValueString(),
+		Protocol:         data.Protocol.ValueString(),
+		Cipher:           data.Cipher.ValueString(),
+		Hash:             data.Hash.ValueString(),
+		Network:          data.Network.ValueString(),
+		WG:               data.WG.ValueBool(),
+		NetworkWG:        data.NetworkWG.ValueString(),
+		NetworkMode:      data.NetworkMode.ValueString(),
+		NetworkStart:     data.NetworkStart.ValueString(),
+		NetworkEnd:       data.NetworkEnd.ValueString(),
+		RestrictRoutes:   data.RestrictRoutes.ValueBool(),
+		IPv6:             data.IPv6.ValueBool(),
+		IPv6Firewall:     data.IPv6Firewall.ValueBool(),
+		BindAddress:      data.BindAddress.ValueString(),
+		MultiDevice:      data.MultiDevice.ValueBool(),
+		SearchDomain:     data.SearchDomain.ValueString(),
+		OtpAuth:          data.OTPAuth.ValueBool(),
+		LzoCompression:   data.LZOCompression.ValueBool(),
+		InterClient:      data.InterClient.ValueBool(),
+		AllowedDevices:   data.AllowedDevices.ValueString(),
+		VxLan:            data.VXLAN.ValueBool(),
+		DnsMapping:       data.DNSMapping.ValueBool(),
+		Debug:            data.Debug.ValueBool(),
+		SsoAuth:          data.SSOAuth.ValueBool(),
+		DeviceAuth:       data.DeviceAuth.ValueBool(),
+		DynamicFirewall:  data.DynamicFirewall.ValueBool(),
+	}
+
+	if !data.Port.IsNull() {
+		server.Port = int(data.Port.ValueInt64())
+	}
+	if !data.PortWG.IsNull() {
+		server.PortWG = int(data.PortWG.ValueInt64())
+	}
+	if !data.DHParamBits.IsNull() {
+		server.DhParamBits = int(data.DHParamBits.ValueInt64())
+	}
+	if !data.PingInterval.IsNull() {
+		server.PingInterval = int(data.PingInterval.ValueInt64())
+	}
+	if !data.PingTimeout.IsNull() {
+		server.PingTimeout = int(data.PingTimeout.ValueInt64())
+	}
+	if !data.LinkPingInterval.IsNull() {
+		server.LinkPingInterval = int(data.LinkPingInterval.ValueInt64())
+	}
+	if !data.LinkPingTimeout.IsNull() {
+		server.LinkPingTimeout = int(data.LinkPingTimeout.ValueInt64())
+	}
+	if !data.InactiveTimeout.IsNull() {
+		server.InactiveTimeout = int(data.InactiveTimeout.ValueInt64())
+	}
+	if !data.SessionTimeout.IsNull() {
+		server.SessionTimeout = int(data.SessionTimeout.ValueInt64())
+	}
+	if !data.MaxClients.IsNull() {
+		server.MaxClients = int(data.MaxClients.ValueInt64())
+	}
+	if !data.MaxDevices.IsNull() {
+		server.MaxDevices = int(data.MaxDevices.ValueInt64())
+	}
+	if !data.ReplicaCount.IsNull() {
+		server.ReplicaCount = int(data.ReplicaCount.ValueInt64())
+	}
+
+	if !data.Groups.IsNull() && !data.Groups.IsUnknown() {
+		var groups []string
+		resp.Diagnostics.Append(data.Groups.ElementsAs(ctx, &groups, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		server.Groups = groups
+	}
+
+	if !data.DNSServers.IsNull() && !data.DNSServers.IsUnknown() {
+		var dnsServers []string
+		resp.Diagnostics.Append(data.DNSServers.ElementsAs(ctx, &dnsServers, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		server.DnsServers = dnsServers
+	}
+
+	err := r.client.UpdateServer(data.ID.ValueString(), &server)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update server, got error: %s", err))
+		return
+	}
+
+	var planOrgIDs, stateOrgIDs []string
+	if !data.OrganizationIDs.IsNull() && !data.OrganizationIDs.IsUnknown() {
+		resp.Diagnostics.Append(data.OrganizationIDs.ElementsAs(ctx, &planOrgIDs, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	var currentState ServerResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &currentState)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !currentState.OrganizationIDs.IsNull() && !currentState.OrganizationIDs.IsUnknown() {
+		resp.Diagnostics.Append(currentState.OrganizationIDs.ElementsAs(ctx, &stateOrgIDs, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	for _, stateOrgID := range stateOrgIDs {
+		found := false
+		for _, planOrgID := range planOrgIDs {
+			if stateOrgID == planOrgID {
 				found = true
 				break
 			}
 		}
 		if !found {
-			result = append(result, i.(string))
+			err := r.client.DetachOrganizationFromServer(stateOrgID, data.ID.ValueString())
+			if err != nil {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to detach organization %s from server, got error: %s", stateOrgID, err))
+				return
+			}
 		}
 	}
 
-	return result
+	for _, planOrgID := range planOrgIDs {
+		found := false
+		for _, stateOrgID := range stateOrgIDs {
+			if planOrgID == stateOrgID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			err := r.client.AttachOrganizationToServer(planOrgID, data.ID.ValueString())
+			if err != nil {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to attach organization %s to server, got error: %s", planOrgID, err))
+				return
+			}
+		}
+	}
+
+	if !data.OrganizationIDs.IsNull() && !data.OrganizationIDs.IsUnknown() {
+	} else {
+		data.OrganizationIDs = types.ListNull(types.StringType)
+	}
+
+	var planRoutes, stateRoutes []types.Object
+	if !data.Route.IsNull() && !data.Route.IsUnknown() {
+		resp.Diagnostics.Append(data.Route.ElementsAs(ctx, &planRoutes, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	if !currentState.Route.IsNull() && !currentState.Route.IsUnknown() {
+		resp.Diagnostics.Append(currentState.Route.ElementsAs(ctx, &stateRoutes, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	for _, stateRouteObj := range stateRoutes {
+		stateRouteAttrs := stateRouteObj.Attributes()
+		stateNetwork := stateRouteAttrs["network"].(types.String).ValueString()
+		
+		found := false
+		for _, planRouteObj := range planRoutes {
+			planRouteAttrs := planRouteObj.Attributes()
+			planNetwork := planRouteAttrs["network"].(types.String).ValueString()
+			if stateNetwork == planNetwork {
+				found = true
+				break
+			}
+		}
+		
+		if !found {
+			stateRoute := pritunl.Route{
+				Network: stateNetwork,
+			}
+			err := r.client.DeleteRouteFromServer(data.ID.ValueString(), stateRoute)
+			if err != nil {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete route %s from server, got error: %s", stateNetwork, err))
+				return
+			}
+		}
+	}
+
+	for _, planRouteObj := range planRoutes {
+		planRouteAttrs := planRouteObj.Attributes()
+		planRoute := pritunl.Route{
+			Network:      planRouteAttrs["network"].(types.String).ValueString(),
+			Comment:      planRouteAttrs["comment"].(types.String).ValueString(),
+			Nat:          planRouteAttrs["nat"].(types.Bool).ValueBool(),
+			NatInterface: planRouteAttrs["nat_interface"].(types.String).ValueString(),
+			NatNetmap:    planRouteAttrs["nat_netmap"].(types.String).ValueString(),
+			Advertise:    planRouteAttrs["advertise"].(types.Bool).ValueBool(),
+			VpcRegion:    planRouteAttrs["vpc_region"].(types.String).ValueString(),
+			VpcID:        planRouteAttrs["vpc_id"].(types.String).ValueString(),
+			NetGateway:   planRouteAttrs["net_gateway"].(types.Bool).ValueBool(),
+		}
+
+		found := false
+		for _, stateRouteObj := range stateRoutes {
+			stateRouteAttrs := stateRouteObj.Attributes()
+			stateNetwork := stateRouteAttrs["network"].(types.String).ValueString()
+			if planRoute.Network == stateNetwork {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			err := r.client.AddRouteToServer(data.ID.ValueString(), planRoute)
+			if err != nil {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to add route %s to server, got error: %s", planRoute.Network, err))
+				return
+			}
+		}
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-func flattenRoutesData(routesList []pritunl.Route) []interface{} {
-	routes := make([]interface{}, 0)
+func (r *ServerResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var data ServerResourceModel
 
-	if routesList != nil {
-		for _, route := range routesList {
-			if route.VirtualNetwork {
-				// skip virtual network route
-				continue
-			}
+	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 
-			routeMap := make(map[string]interface{})
-
-			routeMap["network"] = route.Network
-			routeMap["nat"] = route.Nat
-			routeMap["net_gateway"] = route.NetGateway
-			if route.Comment != "" {
-				routeMap["comment"] = route.Comment
-			}
-
-			routes = append(routes, routeMap)
-		}
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
-	return routes
+	err := r.client.DeleteServer(data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete server, got error: %s", err))
+		return
+	}
 }
 
-// This cannot currently be handled efficiently by a DiffSuppressFunc
-// See: https://github.com/hashicorp/terraform-plugin-sdk/issues/477
-func matchRoutesWithSchema(routes []pritunl.Route, declaredRoutes []interface{}) []pritunl.Route {
-	result := make([]pritunl.Route, len(declaredRoutes))
-
-	routesMap := make(map[string]pritunl.Route, len(declaredRoutes))
-	for _, route := range routes {
-		routesMap[route.GetID()] = route
-	}
-
-	for i, declaredRoute := range declaredRoutes {
-		declaredRouteMap := declaredRoute.(map[string]interface{})
-
-		for key, route := range routesMap {
-			if route.Network != declaredRouteMap["network"] || route.Nat != declaredRouteMap["nat"] || route.NetGateway != declaredRouteMap["net_gateway"] {
-				continue
-			}
-
-			result[i] = route
-			delete(routesMap, key)
-			break
-		}
-	}
-
-	for _, route := range routesMap {
-		result = append(result, route)
-	}
-
-	return result
-}
-
-// This cannot currently be handled efficiently by a DiffSuppressFunc
-// See: https://github.com/hashicorp/terraform-plugin-sdk/issues/477
-func matchStringEntitiesWithSchema(entities []string, declaredEntities []interface{}) []string {
-	if len(declaredEntities) == 0 {
-		return entities
-	}
-
-	result := make([]string, len(declaredEntities))
-
-	for i, declaredEntity := range declaredEntities {
-		for _, entity := range entities {
-			if entity != declaredEntity.(string) {
-				continue
-			}
-
-			result[i] = entity
-			break
-		}
-	}
-
-	return result
+func (r *ServerResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

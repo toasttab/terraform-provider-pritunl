@@ -2,19 +2,19 @@ package provider
 
 import (
 	"fmt"
-	"github.com/disc/terraform-provider-pritunl/internal/pritunl"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 	"os"
 	"strconv"
 	"testing"
+
+	"github.com/disc/terraform-provider-pritunl/internal/pritunl"
+	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
-var providerFactories = map[string]func() (*schema.Provider, error){
-	"pritunl": func() (*schema.Provider, error) {
-		return Provider(), nil
-	},
+var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
+	"pritunl": providerserver.NewProtocol6WithError(New("test")()),
 }
 
 var testClient pritunl.Client

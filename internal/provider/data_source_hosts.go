@@ -2,67 +2,104 @@ package provider
 
 import (
 	"context"
+	"fmt"
+
 	"github.com/disc/terraform-provider-pritunl/internal/pritunl"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-func dataSourceHosts() *schema.Resource {
-	return &schema.Resource{
-		Description: "Use this data source to get a list of the Pritunl hosts.",
-		ReadContext: dataSourceHostsRead,
-		Schema: map[string]*schema.Schema{
-			"hosts": {
-				Description: "A list of the Pritunl hosts resources.",
-				Type:        schema.TypeList,
-				Computed:    true,
-				Elem: &schema.Resource{
-					Schema: dataSourceHost().Schema,
+// Ensure HostsDataSource implements datasource.DataSource interface at compile time
+var _ datasource.DataSource = &HostsDataSource{}
+
+func NewHostsDataSource() datasource.DataSource {
+	return &HostsDataSource{}
+}
+
+type HostsDataSource struct {
+	client pritunl.Client
+}
+
+type HostsDataSourceModel struct {
+	Hosts []HostDataSourceModel `tfsdk:"hosts"`
+}
+
+func (d *HostsDataSource) Metadata(ctx context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_hosts"
+}
+
+func (d *HostsDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		MarkdownDescription: "Use this data source to get a list of the Pritunl hosts.",
+
+		Attributes: map[string]schema.Attribute{
+			"hosts": schema.ListNestedAttribute{
+				MarkdownDescription: "A list of the Pritunl hosts resources.",
+				Computed:            true,
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: hostAttributes(),
 				},
 			},
 		},
 	}
 }
 
-func dataSourceHostsRead(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	apiClient := meta.(pritunl.Client)
-
-	hosts, err := apiClient.GetHosts()
-	if err != nil {
-		return diag.Errorf("could not find any host. Previous error message: %v", err)
+func (d *HostsDataSource) Configure(ctx context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
 	}
 
-	var resultHosts []interface{}
+	client, ok := req.ProviderData.(pritunl.Client)
 
-	for _, host := range hosts {
-		resultHosts = append(resultHosts, flattenHost(&host))
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected Data Source Configure Type",
+			fmt.Sprintf("Expected pritunl.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+		)
+
+		return
 	}
 
-	if err = d.Set("hosts", resultHosts); err != nil {
-		return diag.FromErr(err)
-	}
-
-	d.SetId("hosts")
-
-	return nil
+	d.client = client
 }
 
-func flattenHost(host *pritunl.Host) interface{} {
-	result := map[string]interface{}{}
+func (d *HostsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var data HostsDataSourceModel
 
-	result["id"] = host.ID
-	result["name"] = host.Name
-	result["hostname"] = host.Hostname
-	result["public_addr"] = host.PublicAddr
-	result["public_addr6"] = host.PublicAddr6
-	result["routed_subnet6"] = host.RoutedSubnet6
-	result["routed_subnet6_wg"] = host.RoutedSubnet6WG
-	result["local_addr"] = host.LocalAddr
-	result["local_addr6"] = host.LocalAddr6
-	result["link_addr"] = host.LinkAddr
-	result["sync_address"] = host.SyncAddress
-	result["availability_group"] = host.AvailabilityGroup
-	result["status"] = host.Status
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
 
-	return result
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	hosts, err := d.client.GetHosts()
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Could not retrieve hosts: %s", err))
+		return
+	}
+
+	var hostModels []HostDataSourceModel
+	for _, host := range hosts {
+		hostModel := HostDataSourceModel{
+			ID:                types.StringValue(host.ID),
+			Hostname:          types.StringValue(host.Hostname),
+			Name:              types.StringValue(host.Name),
+			PublicAddr:        types.StringValue(host.PublicAddr),
+			PublicAddr6:       types.StringValue(host.PublicAddr6),
+			RoutedSubnet6:     types.StringValue(host.RoutedSubnet6),
+			RoutedSubnet6WG:   types.StringValue(host.RoutedSubnet6WG),
+			LocalAddr:         types.StringValue(host.LocalAddr),
+			LocalAddr6:        types.StringValue(host.LocalAddr6),
+			AvailabilityGroup: types.StringValue(host.AvailabilityGroup),
+			LinkAddr:          types.StringValue(host.LinkAddr),
+			SyncAddress:       types.StringValue(host.SyncAddress),
+			Status:            types.StringValue(host.Status),
+		}
+		hostModels = append(hostModels, hostModel)
+	}
+
+	data.Hosts = hostModels
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

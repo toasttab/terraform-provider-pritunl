@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 func TestAccPritunlServer(t *testing.T) {
@@ -17,7 +17,7 @@ func TestAccPritunlServer(t *testing.T) {
 
 		resource.Test(t, resource.TestCase{
 			PreCheck:          func() { preCheck(t) },
-			ProviderFactories: providerFactories,
+			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 			CheckDestroy:      testPritunlServerDestroy,
 			Steps: []resource.TestStep{
 				{
@@ -38,7 +38,7 @@ func TestAccPritunlServer(t *testing.T) {
 		testCase := func(t *testing.T, ssoAuth bool) {
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
@@ -65,7 +65,7 @@ func TestAccPritunlServer(t *testing.T) {
 		t.Run("without an option", func(t *testing.T) {
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
@@ -88,7 +88,7 @@ func TestAccPritunlServer(t *testing.T) {
 		testCase := func(t *testing.T, deviceAuth bool) {
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
@@ -115,7 +115,7 @@ func TestAccPritunlServer(t *testing.T) {
 		t.Run("without an option", func(t *testing.T) {
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
@@ -138,7 +138,7 @@ func TestAccPritunlServer(t *testing.T) {
 		testCase := func(t *testing.T, dynamicFirewall bool) {
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
@@ -165,7 +165,7 @@ func TestAccPritunlServer(t *testing.T) {
 		t.Run("without an option", func(t *testing.T) {
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
@@ -188,7 +188,7 @@ func TestAccPritunlServer(t *testing.T) {
 
 		resource.Test(t, resource.TestCase{
 			PreCheck:          func() { preCheck(t) },
-			ProviderFactories: providerFactories,
+			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 			CheckDestroy:      testPritunlServerDestroy,
 			Steps: []resource.TestStep{
 				{
@@ -222,7 +222,7 @@ func TestAccPritunlServer(t *testing.T) {
 
 		resource.Test(t, resource.TestCase{
 			PreCheck:          func() { preCheck(t) },
-			ProviderFactories: providerFactories,
+			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 			CheckDestroy:      testPritunlServerDestroy,
 			Steps: []resource.TestStep{
 				{
@@ -290,7 +290,7 @@ func TestAccPritunlServer(t *testing.T) {
 
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
@@ -326,7 +326,7 @@ func TestAccPritunlServer(t *testing.T) {
 
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
@@ -379,16 +379,16 @@ func TestAccPritunlServer(t *testing.T) {
 
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
 						Config:      testGetServerConfigWithNetworkAndPort(serverName, missedSubnetNetwork, port),
-						ExpectError: regexp.MustCompile(fmt.Sprintf("invalid CIDR address: %s", missedSubnetNetwork)),
+						ExpectError: regexp.MustCompile("Unable to create server"),
 					},
 					{
 						Config:      testGetServerConfigWithNetworkAndPort(serverName, invalidNetwork, port),
-						ExpectError: regexp.MustCompile(fmt.Sprintf("invalid CIDR address: %s", invalidNetwork)),
+						ExpectError: regexp.MustCompile("Network address is not valid"),
 					},
 				},
 			})
@@ -402,7 +402,7 @@ func TestAccPritunlServer(t *testing.T) {
 
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
@@ -426,12 +426,12 @@ func TestAccPritunlServer(t *testing.T) {
 
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
 						Config:      testPritunlServerConfigWithAttachedRoute(serverName, invalidRouteNetwork),
-						ExpectError: regexp.MustCompile(fmt.Sprintf("invalid CIDR address: %s", invalidRouteNetwork)),
+						ExpectError: regexp.MustCompile("Unable to create server"),
 					},
 				},
 			})
@@ -446,12 +446,12 @@ func TestAccPritunlServer(t *testing.T) {
 
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
 						Config:      testGetServerConfigWithBindAddress(serverName, network, invalidBindAddress, port),
-						ExpectError: regexp.MustCompile(fmt.Sprintf("expected bind_address to contain a valid IP, got: %s", invalidBindAddress)),
+						ExpectError: regexp.MustCompile("Unable to create server"),
 					},
 					{
 						Config: testGetServerConfigWithBindAddress(serverName, network, correctBindAddress, port),
@@ -472,7 +472,7 @@ func TestAccPritunlServer(t *testing.T) {
 			correctGroupName := "Group-Has-No-Spaces"
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
@@ -500,12 +500,12 @@ func TestAccPritunlServer(t *testing.T) {
 			invalidGroupName := "Group Name With Spaces"
 			resource.Test(t, resource.TestCase{
 				PreCheck:          func() { preCheck(t) },
-				ProviderFactories: providerFactories,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 				CheckDestroy:      testPritunlServerDestroy,
 				Steps: []resource.TestStep{
 					{
 						Config:      testPritunlServerConfigWithGroups(serverName, invalidGroupName),
-						ExpectError: regexp.MustCompile(fmt.Sprintf("%s contains spaces", invalidGroupName)),
+						ExpectError: regexp.MustCompile("group names cannot contain spaces"),
 					},
 				},
 			})
