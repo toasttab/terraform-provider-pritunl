@@ -269,15 +269,25 @@ func (c client) CreateServer(serverData map[string]interface{}) (*Server, error)
 	}
 	if v, ok := serverData["groups"]; ok {
 		groups := make([]string, 0)
-		for _, group := range v.([]interface{}) {
-			groups = append(groups, group.(string))
+		switch val := v.(type) {
+		case []string:
+			groups = val
+		case []interface{}:
+			for _, group := range val {
+				groups = append(groups, group.(string))
+			}
 		}
 		serverStruct.Groups = groups
 	}
 	if v, ok := serverData["dns_servers"]; ok {
 		dnsServers := make([]string, 0)
-		for _, dns := range v.([]interface{}) {
-			dnsServers = append(dnsServers, dns.(string))
+		switch val := v.(type) {
+		case []string:
+			dnsServers = val
+		case []interface{}:
+			for _, dns := range val {
+				dnsServers = append(dnsServers, dns.(string))
+			}
 		}
 		serverStruct.DnsServers = dnsServers
 	}

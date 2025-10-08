@@ -3,8 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
+	"regexp"
 
 	"github.com/disc/terraform-provider-pritunl/internal/pritunl"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
@@ -74,7 +73,11 @@ type ServerResourceModel struct {
 	DNSMapping        types.Bool     `tfsdk:"dns_mapping"`
 	Debug             types.Bool     `tfsdk:"debug"`
 	RouteDNS          types.Bool     `tfsdk:"route_dns"`
-	Routes            types.List     `tfsdk:"routes"`
+	SSOAuth           types.Bool     `tfsdk:"sso_auth"`
+	DeviceAuth        types.Bool     `tfsdk:"device_auth"`
+	DynamicFirewall   types.Bool     `tfsdk:"dynamic_firewall"`
+	Route             types.List     `tfsdk:"route"`
+	OrganizationIDs   types.List     `tfsdk:"organization_ids"`
 }
 
 func (r *ServerResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -191,7 +194,7 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "Enable IPv6 firewall.",
 				Optional:            true,
 				Computed:            true,
-				Default:             booldefault.StaticBool(true),
+				Default:             booldefault.StaticBool(false),
 			},
 			"bind_address": schema.StringAttribute{
 				MarkdownDescription: "The bind address of the server.",
@@ -212,7 +215,13 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Optional:            true,
 				ElementType:         types.StringType,
 				Validators: []validator.List{
-					listvalidator.ValueStringsAre(stringvalidator.LengthAtLeast(1)),
+					listvalidator.ValueStringsAre(
+						stringvalidator.LengthAtLeast(1),
+						stringvalidator.RegexMatches(
+							regexp.MustCompile(`^[^\s]+$`),
+							"group names cannot contain spaces",
+						),
+					),
 				},
 			},
 			"multi_device": schema.BoolAttribute{
@@ -319,7 +328,7 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The max clients of the server.",
 				Optional:            true,
 				Computed:            true,
-				Default:             int64default.StaticInt64(2048),
+				Default:             int64default.StaticInt64(2000),
 				Validators: []validator.Int64{
 					int64validator.Between(1, 32768),
 				},
@@ -328,9 +337,9 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The max devices of the server.",
 				Optional:            true,
 				Computed:            true,
-				Default:             int64default.StaticInt64(1),
+				Default:             int64default.StaticInt64(0),
 				Validators: []validator.Int64{
-					int64validator.Between(1, 255),
+					int64validator.Between(0, 255),
 				},
 			},
 			"replica_count": schema.Int64Attribute{
@@ -366,10 +375,34 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Computed:            true,
 				Default:             booldefault.StaticBool(true),
 			},
-			"routes": schema.ListNestedAttribute{
-				MarkdownDescription: "Routes for the server.",
+			"sso_auth": schema.BoolAttribute{
+				MarkdownDescription: "Enable SSO authentication.",
 				Optional:            true,
-				NestedObject: schema.NestedAttributeObject{
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"device_auth": schema.BoolAttribute{
+				MarkdownDescription: "Enable device authentication.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"dynamic_firewall": schema.BoolAttribute{
+				MarkdownDescription: "Enable dynamic firewall.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"organization_ids": schema.ListAttribute{
+				MarkdownDescription: "List of organization IDs attached to the server.",
+				Optional:            true,
+				ElementType:         types.StringType,
+			},
+		},
+		Blocks: map[string]schema.Block{
+			"route": schema.ListNestedBlock{
+				MarkdownDescription: "Routes for the server.",
+				NestedObject: schema.NestedBlockObject{
 					Attributes: map[string]schema.Attribute{
 						"network": schema.StringAttribute{
 							MarkdownDescription: "Network address with cidr subnet.",
@@ -459,14 +492,16 @@ func (r *ServerResource) Create(ctx context.Context, req resource.CreateRequest,
 		BindAddress:      data.BindAddress.ValueString(),
 		MultiDevice:      data.MultiDevice.ValueBool(),
 		SearchDomain:     data.SearchDomain.ValueString(),
-		OTPAuth:          data.OTPAuth.ValueBool(),
-		LZOCompression:   data.LZOCompression.ValueBool(),
+		OtpAuth:          data.OTPAuth.ValueBool(),
+		LzoCompression:   data.LZOCompression.ValueBool(),
 		InterClient:      data.InterClient.ValueBool(),
 		AllowedDevices:   data.AllowedDevices.ValueString(),
-		VXLAN:            data.VXLAN.ValueBool(),
-		DNSMapping:       data.DNSMapping.ValueBool(),
+		VxLan:            data.VXLAN.ValueBool(),
+		DnsMapping:       data.DNSMapping.ValueBool(),
 		Debug:            data.Debug.ValueBool(),
-		RouteDNS:         data.RouteDNS.ValueBool(),
+		SsoAuth:          data.SSOAuth.ValueBool(),
+		DeviceAuth:       data.DeviceAuth.ValueBool(),
+		DynamicFirewall:  data.DynamicFirewall.ValueBool(),
 	}
 
 	if !data.Port.IsNull() {
@@ -476,7 +511,7 @@ func (r *ServerResource) Create(ctx context.Context, req resource.CreateRequest,
 		server.PortWG = int(data.PortWG.ValueInt64())
 	}
 	if !data.DHParamBits.IsNull() {
-		server.DHParamBits = int(data.DHParamBits.ValueInt64())
+		server.DhParamBits = int(data.DHParamBits.ValueInt64())
 	}
 	if !data.PingInterval.IsNull() {
 		server.PingInterval = int(data.PingInterval.ValueInt64())
@@ -521,16 +556,157 @@ func (r *ServerResource) Create(ctx context.Context, req resource.CreateRequest,
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		server.DNSServers = dnsServers
+		server.DnsServers = dnsServers
 	}
 
-	serverResponse, err := r.client.CreateServer(server)
+	serverMap := map[string]interface{}{
+		"name":              server.Name,
+		"protocol":          server.Protocol,
+		"cipher":            server.Cipher,
+		"hash":              server.Hash,
+		"port":              server.Port,
+		"network":           server.Network,
+		"wg":                server.WG,
+		"port_wg":           server.PortWG,
+		"network_wg":        server.NetworkWG,
+		"network_mode":      server.NetworkMode,
+		"network_start":     server.NetworkStart,
+		"network_end":       server.NetworkEnd,
+		"restrict_routes":   server.RestrictRoutes,
+		"ipv6":              server.IPv6,
+		"ipv6_firewall":     server.IPv6Firewall,
+		"bind_address":      server.BindAddress,
+		"dh_param_bits":     server.DhParamBits,
+		"multi_device":      server.MultiDevice,
+		"search_domain":     server.SearchDomain,
+		"otp_auth":          server.OtpAuth,
+		"lzo_compression":   server.LzoCompression,
+		"inter_client":      server.InterClient,
+		"allowed_devices":   server.AllowedDevices,
+		"vxlan":             server.VxLan,
+		"dns_mapping":       server.DnsMapping,
+		"debug":             server.Debug,
+		"sso_auth":          server.SsoAuth,
+		"device_auth":       server.DeviceAuth,
+		"dynamic_firewall":  server.DynamicFirewall,
+		"groups":            server.Groups,
+		"dns_servers":       server.DnsServers,
+	}
+
+	serverResponse, err := r.client.CreateServer(serverMap)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create server, got error: %s", err))
 		return
 	}
 
 	data.ID = types.StringValue(serverResponse.ID)
+	data.Name = types.StringValue(serverResponse.Name)
+	data.Protocol = types.StringValue(serverResponse.Protocol)
+	data.Cipher = types.StringValue(serverResponse.Cipher)
+	data.Hash = types.StringValue(serverResponse.Hash)
+	data.Port = types.Int64Value(int64(serverResponse.Port))
+	data.Network = types.StringValue(serverResponse.Network)
+	data.WG = types.BoolValue(serverResponse.WG)
+	data.PortWG = types.Int64Value(int64(serverResponse.PortWG))
+	data.NetworkWG = types.StringValue(serverResponse.NetworkWG)
+	data.NetworkMode = types.StringValue(serverResponse.NetworkMode)
+	data.NetworkStart = types.StringValue(serverResponse.NetworkStart)
+	data.NetworkEnd = types.StringValue(serverResponse.NetworkEnd)
+	data.RestrictRoutes = types.BoolValue(serverResponse.RestrictRoutes)
+	data.IPv6 = types.BoolValue(serverResponse.IPv6)
+	data.IPv6Firewall = types.BoolValue(serverResponse.IPv6Firewall)
+	data.BindAddress = types.StringValue(serverResponse.BindAddress)
+	data.DHParamBits = types.Int64Value(int64(serverResponse.DhParamBits))
+	data.MultiDevice = types.BoolValue(serverResponse.MultiDevice)
+	data.SearchDomain = types.StringValue(serverResponse.SearchDomain)
+	data.OTPAuth = types.BoolValue(serverResponse.OtpAuth)
+	data.LZOCompression = types.BoolValue(serverResponse.LzoCompression)
+	data.InterClient = types.BoolValue(serverResponse.InterClient)
+	data.PingInterval = types.Int64Value(int64(serverResponse.PingInterval))
+	data.PingTimeout = types.Int64Value(int64(serverResponse.PingTimeout))
+	data.LinkPingInterval = types.Int64Value(int64(serverResponse.LinkPingInterval))
+	data.LinkPingTimeout = types.Int64Value(int64(serverResponse.LinkPingTimeout))
+	data.InactiveTimeout = types.Int64Value(int64(serverResponse.InactiveTimeout))
+	data.SessionTimeout = types.Int64Value(int64(serverResponse.SessionTimeout))
+	data.AllowedDevices = types.StringValue(serverResponse.AllowedDevices)
+	data.MaxClients = types.Int64Value(int64(serverResponse.MaxClients))
+	data.MaxDevices = types.Int64Value(int64(serverResponse.MaxDevices))
+	data.ReplicaCount = types.Int64Value(int64(serverResponse.ReplicaCount))
+	data.VXLAN = types.BoolValue(serverResponse.VxLan)
+	data.DNSMapping = types.BoolValue(serverResponse.DnsMapping)
+	data.Debug = types.BoolValue(serverResponse.Debug)
+	data.SSOAuth = types.BoolValue(serverResponse.SsoAuth)
+	data.DeviceAuth = types.BoolValue(serverResponse.DeviceAuth)
+	data.DynamicFirewall = types.BoolValue(serverResponse.DynamicFirewall)
+	data.RouteDNS = types.BoolValue(true)
+
+	if len(serverResponse.Groups) > 0 {
+		groupsAttr := make([]attr.Value, len(serverResponse.Groups))
+		for i, group := range serverResponse.Groups {
+			groupsAttr[i] = types.StringValue(group)
+		}
+		data.Groups, _ = types.ListValue(types.StringType, groupsAttr)
+	} else {
+		data.Groups = types.ListNull(types.StringType)
+	}
+
+	if len(serverResponse.DnsServers) > 0 {
+		dnsServersAttr := make([]attr.Value, len(serverResponse.DnsServers))
+		for i, dnsServer := range serverResponse.DnsServers {
+			dnsServersAttr[i] = types.StringValue(dnsServer)
+		}
+		data.DNSServers, _ = types.ListValue(types.StringType, dnsServersAttr)
+	} else {
+		data.DNSServers = types.ListNull(types.StringType)
+	}
+
+	if !data.OrganizationIDs.IsNull() && !data.OrganizationIDs.IsUnknown() {
+		var orgIDs []string
+		resp.Diagnostics.Append(data.OrganizationIDs.ElementsAs(ctx, &orgIDs, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		
+		for _, orgID := range orgIDs {
+			err := r.client.AttachOrganizationToServer(orgID, serverResponse.ID)
+			if err != nil {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to attach organization %s to server, got error: %s", orgID, err))
+				return
+			}
+		}
+	}
+
+	if !data.Route.IsNull() && !data.Route.IsUnknown() && len(data.Route.Elements()) > 0 {
+		routeElements := data.Route.Elements()
+		for _, routeElement := range routeElements {
+			routeObj := routeElement.(types.Object)
+			routeAttrs := routeObj.Attributes()
+			
+			route := pritunl.Route{
+				Network: routeAttrs["network"].(types.String).ValueString(),
+				Comment: routeAttrs["comment"].(types.String).ValueString(),
+				Nat: routeAttrs["nat"].(types.Bool).ValueBool(),
+				NatInterface: routeAttrs["nat_interface"].(types.String).ValueString(),
+				NatNetmap: routeAttrs["nat_netmap"].(types.String).ValueString(),
+				Advertise: routeAttrs["advertise"].(types.Bool).ValueBool(),
+				VpcRegion: routeAttrs["vpc_region"].(types.String).ValueString(),
+				VpcID: routeAttrs["vpc_id"].(types.String).ValueString(),
+				NetGateway: routeAttrs["net_gateway"].(types.Bool).ValueBool(),
+			}
+			
+			err := r.client.AddRouteToServer(serverResponse.ID, route)
+			if err != nil {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to add route to server, got error: %s", err))
+				return
+			}
+		}
+	}
+
+	if !data.OrganizationIDs.IsNull() && !data.OrganizationIDs.IsUnknown() {
+	} else {
+		data.OrganizationIDs = types.ListNull(types.StringType)
+	}
+
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -566,11 +742,11 @@ func (r *ServerResource) Read(ctx context.Context, req resource.ReadRequest, res
 	data.IPv6 = types.BoolValue(server.IPv6)
 	data.IPv6Firewall = types.BoolValue(server.IPv6Firewall)
 	data.BindAddress = types.StringValue(server.BindAddress)
-	data.DHParamBits = types.Int64Value(int64(server.DHParamBits))
+	data.DHParamBits = types.Int64Value(int64(server.DhParamBits))
 	data.MultiDevice = types.BoolValue(server.MultiDevice)
 	data.SearchDomain = types.StringValue(server.SearchDomain)
-	data.OTPAuth = types.BoolValue(server.OTPAuth)
-	data.LZOCompression = types.BoolValue(server.LZOCompression)
+	data.OTPAuth = types.BoolValue(server.OtpAuth)
+	data.LZOCompression = types.BoolValue(server.LzoCompression)
 	data.InterClient = types.BoolValue(server.InterClient)
 	data.PingInterval = types.Int64Value(int64(server.PingInterval))
 	data.PingTimeout = types.Int64Value(int64(server.PingTimeout))
@@ -582,10 +758,13 @@ func (r *ServerResource) Read(ctx context.Context, req resource.ReadRequest, res
 	data.MaxClients = types.Int64Value(int64(server.MaxClients))
 	data.MaxDevices = types.Int64Value(int64(server.MaxDevices))
 	data.ReplicaCount = types.Int64Value(int64(server.ReplicaCount))
-	data.VXLAN = types.BoolValue(server.VXLAN)
-	data.DNSMapping = types.BoolValue(server.DNSMapping)
+	data.VXLAN = types.BoolValue(server.VxLan)
+	data.DNSMapping = types.BoolValue(server.DnsMapping)
 	data.Debug = types.BoolValue(server.Debug)
-	data.RouteDNS = types.BoolValue(server.RouteDNS)
+	data.SSOAuth = types.BoolValue(server.SsoAuth)
+	data.DeviceAuth = types.BoolValue(server.DeviceAuth)
+	data.DynamicFirewall = types.BoolValue(server.DynamicFirewall)
+	data.RouteDNS = types.BoolValue(true)
 
 	if len(server.Groups) > 0 {
 		groupsAttr := make([]attr.Value, len(server.Groups))
@@ -597,15 +776,62 @@ func (r *ServerResource) Read(ctx context.Context, req resource.ReadRequest, res
 		data.Groups = types.ListNull(types.StringType)
 	}
 
-	if len(server.DNSServers) > 0 {
-		dnsServersAttr := make([]attr.Value, len(server.DNSServers))
-		for i, dnsServer := range server.DNSServers {
+	if len(server.DnsServers) > 0 {
+		dnsServersAttr := make([]attr.Value, len(server.DnsServers))
+		for i, dnsServer := range server.DnsServers {
 			dnsServersAttr[i] = types.StringValue(dnsServer)
 		}
 		data.DNSServers, _ = types.ListValue(types.StringType, dnsServersAttr)
 	} else {
 		data.DNSServers = types.ListNull(types.StringType)
 	}
+
+	attachedOrgs, err := r.client.GetOrganizationsByServer(data.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to get organizations for server, got error: %s", err))
+		return
+	}
+	
+	if !data.OrganizationIDs.IsNull() && !data.OrganizationIDs.IsUnknown() {
+		var currentOrgIDs []string
+		resp.Diagnostics.Append(data.OrganizationIDs.ElementsAs(ctx, &currentOrgIDs, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		
+		attachedOrgMap := make(map[string]bool)
+		for _, org := range attachedOrgs {
+			attachedOrgMap[org.ID] = true
+		}
+		
+		validOrgIDs := make([]string, 0)
+		for _, orgID := range currentOrgIDs {
+			if attachedOrgMap[orgID] {
+				validOrgIDs = append(validOrgIDs, orgID)
+			}
+		}
+		
+		if len(validOrgIDs) > 0 {
+			orgIDsAttr := make([]attr.Value, len(validOrgIDs))
+			for i, orgID := range validOrgIDs {
+				orgIDsAttr[i] = types.StringValue(orgID)
+			}
+			data.OrganizationIDs, _ = types.ListValue(types.StringType, orgIDsAttr)
+		} else {
+			data.OrganizationIDs = types.ListNull(types.StringType)
+		}
+	} else {
+		if len(attachedOrgs) > 0 {
+			orgIDsAttr := make([]attr.Value, len(attachedOrgs))
+			for i, org := range attachedOrgs {
+				orgIDsAttr[i] = types.StringValue(org.ID)
+			}
+			data.OrganizationIDs, _ = types.ListValue(types.StringType, orgIDsAttr)
+		} else {
+			data.OrganizationIDs = types.ListNull(types.StringType)
+		}
+	}
+
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -636,14 +862,16 @@ func (r *ServerResource) Update(ctx context.Context, req resource.UpdateRequest,
 		BindAddress:      data.BindAddress.ValueString(),
 		MultiDevice:      data.MultiDevice.ValueBool(),
 		SearchDomain:     data.SearchDomain.ValueString(),
-		OTPAuth:          data.OTPAuth.ValueBool(),
-		LZOCompression:   data.LZOCompression.ValueBool(),
+		OtpAuth:          data.OTPAuth.ValueBool(),
+		LzoCompression:   data.LZOCompression.ValueBool(),
 		InterClient:      data.InterClient.ValueBool(),
 		AllowedDevices:   data.AllowedDevices.ValueString(),
-		VXLAN:            data.VXLAN.ValueBool(),
-		DNSMapping:       data.DNSMapping.ValueBool(),
+		VxLan:            data.VXLAN.ValueBool(),
+		DnsMapping:       data.DNSMapping.ValueBool(),
 		Debug:            data.Debug.ValueBool(),
-		RouteDNS:         data.RouteDNS.ValueBool(),
+		SsoAuth:          data.SSOAuth.ValueBool(),
+		DeviceAuth:       data.DeviceAuth.ValueBool(),
+		DynamicFirewall:  data.DynamicFirewall.ValueBool(),
 	}
 
 	if !data.Port.IsNull() {
@@ -653,7 +881,7 @@ func (r *ServerResource) Update(ctx context.Context, req resource.UpdateRequest,
 		server.PortWG = int(data.PortWG.ValueInt64())
 	}
 	if !data.DHParamBits.IsNull() {
-		server.DHParamBits = int(data.DHParamBits.ValueInt64())
+		server.DhParamBits = int(data.DHParamBits.ValueInt64())
 	}
 	if !data.PingInterval.IsNull() {
 		server.PingInterval = int(data.PingInterval.ValueInt64())
@@ -698,14 +926,75 @@ func (r *ServerResource) Update(ctx context.Context, req resource.UpdateRequest,
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		server.DNSServers = dnsServers
+		server.DnsServers = dnsServers
 	}
 
-	err := r.client.UpdateServer(data.ID.ValueString(), server)
+	err := r.client.UpdateServer(data.ID.ValueString(), &server)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update server, got error: %s", err))
 		return
 	}
+
+	var planOrgIDs, stateOrgIDs []string
+	if !data.OrganizationIDs.IsNull() && !data.OrganizationIDs.IsUnknown() {
+		resp.Diagnostics.Append(data.OrganizationIDs.ElementsAs(ctx, &planOrgIDs, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	var currentState ServerResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &currentState)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !currentState.OrganizationIDs.IsNull() && !currentState.OrganizationIDs.IsUnknown() {
+		resp.Diagnostics.Append(currentState.OrganizationIDs.ElementsAs(ctx, &stateOrgIDs, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	for _, stateOrgID := range stateOrgIDs {
+		found := false
+		for _, planOrgID := range planOrgIDs {
+			if stateOrgID == planOrgID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			err := r.client.DetachOrganizationFromServer(stateOrgID, data.ID.ValueString())
+			if err != nil {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to detach organization %s from server, got error: %s", stateOrgID, err))
+				return
+			}
+		}
+	}
+
+	for _, planOrgID := range planOrgIDs {
+		found := false
+		for _, stateOrgID := range stateOrgIDs {
+			if planOrgID == stateOrgID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			err := r.client.AttachOrganizationToServer(planOrgID, data.ID.ValueString())
+			if err != nil {
+				resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to attach organization %s to server, got error: %s", planOrgID, err))
+				return
+			}
+		}
+	}
+
+	if !data.OrganizationIDs.IsNull() && !data.OrganizationIDs.IsUnknown() {
+	} else {
+		data.OrganizationIDs = types.ListNull(types.StringType)
+	}
+
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
