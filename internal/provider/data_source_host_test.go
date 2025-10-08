@@ -2,9 +2,10 @@ package provider
 
 import (
 	"fmt"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"regexp"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
 func TestDataSourceHost(t *testing.T) {
@@ -13,7 +14,7 @@ func TestDataSourceHost(t *testing.T) {
 	notExistHostname := "not-exist-hostname"
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:          func() {},
-		ProviderFactories: providerFactories,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: testPritunlHostSimpleConfig(existsHostname),
