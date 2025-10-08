@@ -305,7 +305,7 @@ func (r *UserResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	user, err := r.client.GetUser(data.OrganizationID.ValueString(), data.ID.ValueString())
+	user, err := r.client.GetUser(data.ID.ValueString(), data.OrganizationID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read user, got error: %s", err))
 		return
@@ -451,7 +451,7 @@ func (r *UserResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
-	err := r.client.DeleteUser(data.OrganizationID.ValueString(), data.ID.ValueString())
+	err := r.client.DeleteUser(data.ID.ValueString(), data.OrganizationID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete user, got error: %s", err))
 		return
