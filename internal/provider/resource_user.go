@@ -243,15 +243,9 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 		data.DNSSuffix = types.StringValue(userResponse.DnsSuffix)
 	}
 	
-	if userResponse.Disabled {
-		data.Disabled = types.BoolValue(true)
-	}
-	if userResponse.ClientToClient {
-		data.ClientToClient = types.BoolValue(true)
-	}
-	if userResponse.BypassSecondary {
-		data.BypassSecondary = types.BoolValue(true)
-	}
+	data.Disabled = types.BoolValue(userResponse.Disabled)
+	data.ClientToClient = types.BoolValue(userResponse.ClientToClient)
+	data.BypassSecondary = types.BoolValue(userResponse.BypassSecondary)
 
 	if len(userResponse.Groups) > 0 {
 		groupsAttr := make([]attr.Value, len(userResponse.Groups))
@@ -312,12 +306,25 @@ func (r *UserResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 
 	data.Name = types.StringValue(user.Name)
-	data.Email = types.StringValue(user.Email)
+	
+	// Only update non-computed attributes if they have values or were explicitly set
+	if user.Email != "" {
+		data.Email = types.StringValue(user.Email)
+	} else if data.Email.IsNull() {
+		data.Email = types.StringNull()
+	}
+	
+	if user.DnsSuffix != "" {
+		data.DNSSuffix = types.StringValue(user.DnsSuffix)
+	} else if data.DNSSuffix.IsNull() {
+		data.DNSSuffix = types.StringNull()
+	}
+	
 	data.Disabled = types.BoolValue(user.Disabled)
 	data.ClientToClient = types.BoolValue(user.ClientToClient)
-	data.AuthType = types.StringValue(user.AuthType)
-	data.DNSSuffix = types.StringValue(user.DnsSuffix)
 	data.BypassSecondary = types.BoolValue(user.BypassSecondary)
+	
+	data.AuthType = types.StringValue(user.AuthType)
 
 	if len(user.Groups) > 0 {
 		groupsAttr := make([]attr.Value, len(user.Groups))
