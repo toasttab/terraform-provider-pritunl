@@ -888,29 +888,8 @@ func (r *ServerResource) Read(ctx context.Context, req resource.ReadRequest, res
 			routeAttrs := routeObj.Attributes()
 			network := routeAttrs["network"].(types.String).ValueString()
 			
-			if attachedRoute, exists := attachedRouteMap[network]; exists {
-				routeObjValue, _ := types.ObjectValue(map[string]attr.Type{
-					"network":       types.StringType,
-					"comment":       types.StringType,
-					"nat":           types.BoolType,
-					"nat_interface": types.StringType,
-					"nat_netmap":    types.StringType,
-					"advertise":     types.BoolType,
-					"vpc_region":    types.StringType,
-					"vpc_id":        types.StringType,
-					"net_gateway":   types.BoolType,
-				}, map[string]attr.Value{
-					"network":       types.StringValue(attachedRoute.Network),
-					"comment":       types.StringValue(attachedRoute.Comment),
-					"nat":           types.BoolValue(attachedRoute.Nat),
-					"nat_interface": types.StringValue(attachedRoute.NatInterface),
-					"nat_netmap":    types.StringValue(attachedRoute.NatNetmap),
-					"advertise":     types.BoolValue(attachedRoute.Advertise),
-					"vpc_region":    types.StringValue(attachedRoute.VpcRegion),
-					"vpc_id":        types.StringValue(attachedRoute.VpcID),
-					"net_gateway":   types.BoolValue(attachedRoute.NetGateway),
-				})
-				validRoutes = append(validRoutes, routeObjValue)
+			if _, exists := attachedRouteMap[network]; exists {
+				validRoutes = append(validRoutes, routeObj)
 			}
 		}
 		
@@ -944,19 +923,84 @@ func (r *ServerResource) Read(ctx context.Context, req resource.ReadRequest, res
 			})
 		}
 	} else {
-		data.Route = types.ListNull(types.ObjectType{
-			AttrTypes: map[string]attr.Type{
-				"network":       types.StringType,
-				"comment":       types.StringType,
-				"nat":           types.BoolType,
-				"nat_interface": types.StringType,
-				"nat_netmap":    types.StringType,
-				"advertise":     types.BoolType,
-				"vpc_region":    types.StringType,
-				"vpc_id":        types.StringType,
-				"net_gateway":   types.BoolType,
-			},
-		})
+		configuredRoutes := make([]pritunl.Route, 0)
+		for _, route := range attachedRoutes {
+			if route.Comment != "" {
+				configuredRoutes = append(configuredRoutes, route)
+			}
+		}
+		
+		if len(configuredRoutes) > 0 {
+			routeAttrs := make([]attr.Value, len(configuredRoutes))
+			for i, route := range configuredRoutes {
+				natInterface := types.StringNull()
+				if route.NatInterface != "" {
+					natInterface = types.StringValue(route.NatInterface)
+				}
+				natNetmap := types.StringNull()
+				if route.NatNetmap != "" {
+					natNetmap = types.StringValue(route.NatNetmap)
+				}
+				vpcRegion := types.StringNull()
+				if route.VpcRegion != "" {
+					vpcRegion = types.StringValue(route.VpcRegion)
+				}
+				vpcId := types.StringNull()
+				if route.VpcID != "" {
+					vpcId = types.StringValue(route.VpcID)
+				}
+				
+				routeObjValue, _ := types.ObjectValue(map[string]attr.Type{
+					"network":       types.StringType,
+					"comment":       types.StringType,
+					"nat":           types.BoolType,
+					"nat_interface": types.StringType,
+					"nat_netmap":    types.StringType,
+					"advertise":     types.BoolType,
+					"vpc_region":    types.StringType,
+					"vpc_id":        types.StringType,
+					"net_gateway":   types.BoolType,
+				}, map[string]attr.Value{
+					"network":       types.StringValue(route.Network),
+					"comment":       types.StringValue(route.Comment),
+					"nat":           types.BoolValue(route.Nat),
+					"nat_interface": natInterface,
+					"nat_netmap":    natNetmap,
+					"advertise":     types.BoolValue(route.Advertise),
+					"vpc_region":    vpcRegion,
+					"vpc_id":        vpcId,
+					"net_gateway":   types.BoolValue(route.NetGateway),
+				})
+				routeAttrs[i] = routeObjValue
+			}
+			data.Route, _ = types.ListValue(types.ObjectType{
+				AttrTypes: map[string]attr.Type{
+					"network":       types.StringType,
+					"comment":       types.StringType,
+					"nat":           types.BoolType,
+					"nat_interface": types.StringType,
+					"nat_netmap":    types.StringType,
+					"advertise":     types.BoolType,
+					"vpc_region":    types.StringType,
+					"vpc_id":        types.StringType,
+					"net_gateway":   types.BoolType,
+				},
+			}, routeAttrs)
+		} else {
+			data.Route = types.ListNull(types.ObjectType{
+				AttrTypes: map[string]attr.Type{
+					"network":       types.StringType,
+					"comment":       types.StringType,
+					"nat":           types.BoolType,
+					"nat_interface": types.StringType,
+					"nat_netmap":    types.StringType,
+					"advertise":     types.BoolType,
+					"vpc_region":    types.StringType,
+					"vpc_id":        types.StringType,
+					"net_gateway":   types.BoolType,
+				},
+			})
+		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)

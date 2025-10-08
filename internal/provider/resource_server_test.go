@@ -388,7 +388,7 @@ func TestAccPritunlServer(t *testing.T) {
 					},
 					{
 						Config:      testGetServerConfigWithNetworkAndPort(serverName, invalidNetwork, port),
-						ExpectError: regexp.MustCompile("Unable to create server"),
+						ExpectError: regexp.MustCompile("Network address is not valid"),
 					},
 				},
 			})
