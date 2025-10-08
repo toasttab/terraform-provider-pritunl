@@ -181,14 +181,13 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	user := pritunl.User{
 		Name:            data.Name.ValueString(),
-		OrganizationID:  data.OrganizationID.ValueString(),
+		Organization:    data.OrganizationID.ValueString(),
 		Email:           data.Email.ValueString(),
 		Disabled:        data.Disabled.ValueBool(),
 		ClientToClient:  data.ClientToClient.ValueBool(),
 		AuthType:        data.AuthType.ValueString(),
-		DNSSuffix:       data.DNSSuffix.ValueString(),
+		DnsSuffix:       data.DNSSuffix.ValueString(),
 		BypassSecondary: data.BypassSecondary.ValueBool(),
-		Pin:             data.Pin.ValueString(),
 	}
 
 	if !data.Groups.IsNull() && !data.Groups.IsUnknown() {
@@ -224,16 +223,75 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		user.DNSServers = dnsServers
+		user.DnsServers = dnsServers
 	}
 
-	userResponse, err := r.client.CreateUser(user.OrganizationID, user)
+	userResponse, err := r.client.CreateUser(user)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create user, got error: %s", err))
 		return
 	}
 
 	data.ID = types.StringValue(userResponse.ID)
+	data.Name = types.StringValue(userResponse.Name)
+	data.AuthType = types.StringValue(userResponse.AuthType)
+	
+	if userResponse.Email != "" {
+		data.Email = types.StringValue(userResponse.Email)
+	}
+	if userResponse.DnsSuffix != "" {
+		data.DNSSuffix = types.StringValue(userResponse.DnsSuffix)
+	}
+	
+	if userResponse.Disabled {
+		data.Disabled = types.BoolValue(true)
+	}
+	if userResponse.ClientToClient {
+		data.ClientToClient = types.BoolValue(true)
+	}
+	if userResponse.BypassSecondary {
+		data.BypassSecondary = types.BoolValue(true)
+	}
+
+	if len(userResponse.Groups) > 0 {
+		groupsAttr := make([]attr.Value, len(userResponse.Groups))
+		for i, group := range userResponse.Groups {
+			groupsAttr[i] = types.StringValue(group)
+		}
+		data.Groups, _ = types.ListValue(types.StringType, groupsAttr)
+	} else {
+		data.Groups = types.ListNull(types.StringType)
+	}
+
+	if len(userResponse.NetworkLinks) > 0 {
+		networkLinksAttr := make([]attr.Value, len(userResponse.NetworkLinks))
+		for i, networkLink := range userResponse.NetworkLinks {
+			networkLinksAttr[i] = types.StringValue(networkLink)
+		}
+		data.NetworkLinks, _ = types.ListValue(types.StringType, networkLinksAttr)
+	} else {
+		data.NetworkLinks = types.ListNull(types.StringType)
+	}
+
+	if len(userResponse.MacAddresses) > 0 {
+		macAddressesAttr := make([]attr.Value, len(userResponse.MacAddresses))
+		for i, macAddress := range userResponse.MacAddresses {
+			macAddressesAttr[i] = types.StringValue(macAddress)
+		}
+		data.MacAddresses, _ = types.ListValue(types.StringType, macAddressesAttr)
+	} else {
+		data.MacAddresses = types.ListNull(types.StringType)
+	}
+
+	if len(userResponse.DnsServers) > 0 {
+		dnsServersAttr := make([]attr.Value, len(userResponse.DnsServers))
+		for i, dnsServer := range userResponse.DnsServers {
+			dnsServersAttr[i] = types.StringValue(dnsServer)
+		}
+		data.DNSServers, _ = types.ListValue(types.StringType, dnsServersAttr)
+	} else {
+		data.DNSServers = types.ListNull(types.StringType)
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -258,7 +316,7 @@ func (r *UserResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	data.Disabled = types.BoolValue(user.Disabled)
 	data.ClientToClient = types.BoolValue(user.ClientToClient)
 	data.AuthType = types.StringValue(user.AuthType)
-	data.DNSSuffix = types.StringValue(user.DNSSuffix)
+	data.DNSSuffix = types.StringValue(user.DnsSuffix)
 	data.BypassSecondary = types.BoolValue(user.BypassSecondary)
 
 	if len(user.Groups) > 0 {
@@ -291,9 +349,9 @@ func (r *UserResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		data.MacAddresses = types.ListNull(types.StringType)
 	}
 
-	if len(user.DNSServers) > 0 {
-		dnsServersAttr := make([]attr.Value, len(user.DNSServers))
-		for i, dnsServer := range user.DNSServers {
+	if len(user.DnsServers) > 0 {
+		dnsServersAttr := make([]attr.Value, len(user.DnsServers))
+		for i, dnsServer := range user.DnsServers {
 			dnsServersAttr[i] = types.StringValue(dnsServer)
 		}
 		data.DNSServers, _ = types.ListValue(types.StringType, dnsServersAttr)
@@ -318,14 +376,13 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	// Start with basic user data that's always updated
 	user := pritunl.User{
 		Name:            plan.Name.ValueString(),
-		OrganizationID:  plan.OrganizationID.ValueString(),
+		Organization:    plan.OrganizationID.ValueString(),
 		Email:           plan.Email.ValueString(),
 		Disabled:        plan.Disabled.ValueBool(),
 		ClientToClient:  plan.ClientToClient.ValueBool(),
 		AuthType:        plan.AuthType.ValueString(),
-		DNSSuffix:       plan.DNSSuffix.ValueString(),
+		DnsSuffix:       plan.DNSSuffix.ValueString(),
 		BypassSecondary: plan.BypassSecondary.ValueBool(),
-		Pin:             plan.Pin.ValueString(),
 	}
 
 	// Only update groups if they have changed
@@ -372,11 +429,11 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			if resp.Diagnostics.HasError() {
 				return
 			}
-			user.DNSServers = dnsServers
+			user.DnsServers = dnsServers
 		}
 	}
 
-	err := r.client.UpdateUser(plan.OrganizationID.ValueString(), plan.ID.ValueString(), user)
+	err := r.client.UpdateUser(plan.ID.ValueString(), &user)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update user, got error: %s", err))
 		return
