@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -131,6 +132,9 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The port of the server.",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 				Validators: []validator.Int64{
 					int64validator.Between(1, 65535),
 				},
@@ -139,6 +143,9 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The network of the server.",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"wg": schema.BoolAttribute{
 				MarkdownDescription: "Enable WireGuard.",
@@ -150,6 +157,9 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The WireGuard port of the server.",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 				Validators: []validator.Int64{
 					int64validator.Between(1, 65535),
 				},
@@ -158,6 +168,9 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The WireGuard network of the server.",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"network_mode": schema.StringAttribute{
 				MarkdownDescription: "The network mode of the server.",
@@ -172,11 +185,17 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The network start of the server.",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"network_end": schema.StringAttribute{
 				MarkdownDescription: "The network end of the server.",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"restrict_routes": schema.BoolAttribute{
 				MarkdownDescription: "Restrict routes.",
@@ -200,6 +219,9 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "The bind address of the server.",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"dh_param_bits": schema.Int64Attribute{
 				MarkdownDescription: "The DH param bits of the server.",
@@ -242,6 +264,9 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				MarkdownDescription: "Search domain to push to clients.",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"otp_auth": schema.BoolAttribute{
 				MarkdownDescription: "Enable OTP authentication.",
@@ -415,6 +440,8 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 						"nat": schema.BoolAttribute{
 							MarkdownDescription: "Enable NAT for the route.",
 							Optional:            true,
+							Computed:            true,
+							Default:             booldefault.StaticBool(false),
 						},
 						"nat_interface": schema.StringAttribute{
 							MarkdownDescription: "NAT interface for the route.",
@@ -427,6 +454,8 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 						"advertise": schema.BoolAttribute{
 							MarkdownDescription: "Advertise the route.",
 							Optional:            true,
+							Computed:            true,
+							Default:             booldefault.StaticBool(false),
 						},
 						"vpc_region": schema.StringAttribute{
 							MarkdownDescription: "VPC region for the route.",
@@ -439,6 +468,8 @@ func (r *ServerResource) Schema(ctx context.Context, req resource.SchemaRequest,
 						"net_gateway": schema.BoolAttribute{
 							MarkdownDescription: "Enable net gateway for the route.",
 							Optional:            true,
+							Computed:            true,
+							Default:             booldefault.StaticBool(false),
 						},
 					},
 				},
@@ -832,6 +863,99 @@ func (r *ServerResource) Read(ctx context.Context, req resource.ReadRequest, res
 		}
 	}
 
+	if !data.Route.IsNull() && !data.Route.IsUnknown() {
+		var currentRoutes []types.Object
+		resp.Diagnostics.Append(data.Route.ElementsAs(ctx, &currentRoutes, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		
+		attachedRoutes, err := r.client.GetRoutesByServer(data.ID.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to get routes for server, got error: %s", err))
+			return
+		}
+		
+		attachedRouteMap := make(map[string]pritunl.Route)
+		for _, route := range attachedRoutes {
+			attachedRouteMap[route.Network] = route
+		}
+		
+		validRoutes := make([]attr.Value, 0)
+		for _, routeObj := range currentRoutes {
+			routeAttrs := routeObj.Attributes()
+			network := routeAttrs["network"].(types.String).ValueString()
+			
+			if attachedRoute, exists := attachedRouteMap[network]; exists {
+				routeObjValue, _ := types.ObjectValue(map[string]attr.Type{
+					"network":       types.StringType,
+					"comment":       types.StringType,
+					"nat":           types.BoolType,
+					"nat_interface": types.StringType,
+					"nat_netmap":    types.StringType,
+					"advertise":     types.BoolType,
+					"vpc_region":    types.StringType,
+					"vpc_id":        types.StringType,
+					"net_gateway":   types.BoolType,
+				}, map[string]attr.Value{
+					"network":       types.StringValue(attachedRoute.Network),
+					"comment":       types.StringValue(attachedRoute.Comment),
+					"nat":           types.BoolValue(attachedRoute.Nat),
+					"nat_interface": types.StringValue(attachedRoute.NatInterface),
+					"nat_netmap":    types.StringValue(attachedRoute.NatNetmap),
+					"advertise":     types.BoolValue(attachedRoute.Advertise),
+					"vpc_region":    types.StringValue(attachedRoute.VpcRegion),
+					"vpc_id":        types.StringValue(attachedRoute.VpcID),
+					"net_gateway":   types.BoolValue(attachedRoute.NetGateway),
+				})
+				validRoutes = append(validRoutes, routeObjValue)
+			}
+		}
+		
+		if len(validRoutes) > 0 {
+			data.Route, _ = types.ListValue(types.ObjectType{
+				AttrTypes: map[string]attr.Type{
+					"network":       types.StringType,
+					"comment":       types.StringType,
+					"nat":           types.BoolType,
+					"nat_interface": types.StringType,
+					"nat_netmap":    types.StringType,
+					"advertise":     types.BoolType,
+					"vpc_region":    types.StringType,
+					"vpc_id":        types.StringType,
+					"net_gateway":   types.BoolType,
+				},
+			}, validRoutes)
+		} else {
+			data.Route = types.ListNull(types.ObjectType{
+				AttrTypes: map[string]attr.Type{
+					"network":       types.StringType,
+					"comment":       types.StringType,
+					"nat":           types.BoolType,
+					"nat_interface": types.StringType,
+					"nat_netmap":    types.StringType,
+					"advertise":     types.BoolType,
+					"vpc_region":    types.StringType,
+					"vpc_id":        types.StringType,
+					"net_gateway":   types.BoolType,
+				},
+			})
+		}
+	} else {
+		data.Route = types.ListNull(types.ObjectType{
+			AttrTypes: map[string]attr.Type{
+				"network":       types.StringType,
+				"comment":       types.StringType,
+				"nat":           types.BoolType,
+				"nat_interface": types.StringType,
+				"nat_netmap":    types.StringType,
+				"advertise":     types.BoolType,
+				"vpc_region":    types.StringType,
+				"vpc_id":        types.StringType,
+				"net_gateway":   types.BoolType,
+			},
+		})
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
