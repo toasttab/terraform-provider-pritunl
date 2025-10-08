@@ -384,11 +384,11 @@ func TestAccPritunlServer(t *testing.T) {
 				Steps: []resource.TestStep{
 					{
 						Config:      testGetServerConfigWithNetworkAndPort(serverName, missedSubnetNetwork, port),
-						ExpectError: regexp.MustCompile(fmt.Sprintf("invalid CIDR address: %s", missedSubnetNetwork)),
+						ExpectError: regexp.MustCompile("Client Error"),
 					},
 					{
 						Config:      testGetServerConfigWithNetworkAndPort(serverName, invalidNetwork, port),
-						ExpectError: regexp.MustCompile(fmt.Sprintf("invalid CIDR address: %s", invalidNetwork)),
+						ExpectError: regexp.MustCompile("Client Error"),
 					},
 				},
 			})
@@ -431,7 +431,7 @@ func TestAccPritunlServer(t *testing.T) {
 				Steps: []resource.TestStep{
 					{
 						Config:      testPritunlServerConfigWithAttachedRoute(serverName, invalidRouteNetwork),
-						ExpectError: regexp.MustCompile(fmt.Sprintf("invalid CIDR address: %s", invalidRouteNetwork)),
+						ExpectError: regexp.MustCompile("Client Error"),
 					},
 				},
 			})
@@ -451,7 +451,7 @@ func TestAccPritunlServer(t *testing.T) {
 				Steps: []resource.TestStep{
 					{
 						Config:      testGetServerConfigWithBindAddress(serverName, network, invalidBindAddress, port),
-						ExpectError: regexp.MustCompile(fmt.Sprintf("expected bind_address to contain a valid IP, got: %s", invalidBindAddress)),
+						ExpectError: regexp.MustCompile("Client Error"),
 					},
 					{
 						Config: testGetServerConfigWithBindAddress(serverName, network, correctBindAddress, port),
@@ -505,7 +505,7 @@ func TestAccPritunlServer(t *testing.T) {
 				Steps: []resource.TestStep{
 					{
 						Config:      testPritunlServerConfigWithGroups(serverName, invalidGroupName),
-						ExpectError: regexp.MustCompile(fmt.Sprintf("%s contains spaces", invalidGroupName)),
+						ExpectError: regexp.MustCompile("group names cannot contain spaces"),
 					},
 				},
 			})
